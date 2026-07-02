@@ -6,13 +6,14 @@
 /* By: Ser Superior <marcioeduine@gmail.com>       +#+  +:+       +#+        */
 /* +#+#+#+#+#+   +#+           */
 /* Created: 2026/07/02 01:38:25 by Ser Superior          #+#    #+#             */
-/* Updated: 2026/07/02 06:40:00 by Ser Superior         ###   ########.fr       */
+/* Updated: 2026/07/02 07:10:00 by Ser Superior         ###   ########.fr       */
 /* */
 /* ************************************************************************** */
 
 #include <termios.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <sys/ioctl.h>
 #include <iostream>
 #include <vector>
@@ -32,6 +33,7 @@
 #define SELECT_ALL       CTRL_KEY('a')
 #define PREV_TAB_COMMAND CTRL_KEY('h')
 #define NEXT_TAB_COMMAND CTRL_KEY('l')
+#define AI_COMMAND       CTRL_KEY('g')
 
 enum e_editorMode {
     MODE_EDITOR,
@@ -57,10 +59,10 @@ struct FileBuffer {
     int                      cursor_x;
     int                      cursor_y;
     int                      row_offset;
-    bool                     is_dirty; // Estado de modificação do ficheiro
+    bool                     is_dirty;
 };
 
-// Estado Global
+// Estado Global do Sistema
 struct termios          orig_termios;
 std::vector<FileBuffer> open_files;
 int                     active_file_idx = 0;
@@ -76,21 +78,21 @@ int                      selected_file_idx = 0;
 const char* keywords[] = { "switch", "if", "else", "while", "for", "break", "return", "define", "include", "and", "or", "not", "xor" };
 const char* datatypes[] = { "int", "char", "void", "struct", "class", "bool", "char32_t", "size_t" };
 
-// --- PALETA DE CORES TRUE COLOR (RGB DE 24 BITS) ---
+// --- CONFIGURAÇÃO DA PALETA TRUE COLOR (RGB 24-BITS) ---
 #define RGB_BG_DARK   "\x1b[48;2;30;30;46m"
 #define RGB_TAB_BG    "\x1b[48;2;24;24;37m"
 #define RGB_TAB_ACT   "\x1b[48;2;137;180;250;38;2;17;17;27;1m"
 #define RGB_TEXT      "\x1b[38;2;205;214;244m"
-#define RGB_KEYWORD   "\x1b[38;2;137;220;235m" // Azul Ciano
-#define RGB_DATATYPE  "\x1b[38;2;166;227;161m" // Verde
-#define RGB_STRING    "\x1b[38;2;249;226;175m" // Amarelo Pastel
-#define RGB_COMMENT   "\x1b[38;2;108;112;134m" // Cinzento
-#define RGB_PREPROC   "\x1b[38;2;245;194;231m" // Rosa Mágico
-#define RGB_NUMBER    "\x1b[38;2;2fab;242m"    // Laranja/Azul claro
-#define RGB_GUTTER    "\x1b[38;2;88;91;112m"   // Cinzento Escuro
+#define RGB_KEYWORD   "\x1b[38;2;137;220;235m"
+#define RGB_DATATYPE  "\x1b[38;2;166;227;161m"
+#define RGB_STRING    "\x1b[38;2;249;226;175m"
+#define RGB_COMMENT   "\x1b[38;2;108;112;134m"
+#define RGB_PREPROC   "\x1b[38;2;245;194;231m"
+#define RGB_NUMBER    "\x1b[38;2;2fab;242m"
+#define RGB_GUTTER    "\x1b[38;2;88;91;112m"
 #define RGB_RESET     "\x1b[0m"
 
-// --- FUNÇÕES UTF-8 ---
+// --- FUNÇÕES DE SUPORTE MANIPULAÇÃO UTF-8 ---
 
 int GetUtf8CharLength(unsigned char c) {
     if ((c & 0x80) == 0) return 1;
@@ -116,11 +118,21 @@ std::vector<std::string> SplitUtf8String(const std::string& str) {
     return chars;
 }
 
+std::string BuildHorizontalLine(int width) {
+    std::string line = "";
+    for (int i = 0; i < width; ++i) {
+        line += "─"; // Aqui passa como string literal literal, o que é perfeitamente válido
+    }
+    return line;
+}
+
 std::string JoinUtf8Chars(const std::vector<std::string>& chars) {
     std::string out = "";
     for (size_t i = 0; i < chars.size(); ++i) out += chars[i];
     return out;
 }
+
+// --- ENGINE DE GESTÃO DO TERMINAL ---
 
 void GetTerminalSize(void) {
     struct winsize ws;
@@ -154,7 +166,7 @@ void enableRawMode(void) {
 void SaveUndoState(FileBuffer& fb) {
     if (fb.undo_stack.size() > 50) fb.undo_stack.erase(fb.undo_stack.begin());
     fb.undo_stack.push_back(fb.lines);
-    fb.is_dirty = true; // Activa flag de modificação
+    fb.is_dirty = true;
 }
 
 void OpenFileBuffer(const std::string& filename) {
@@ -189,6 +201,14 @@ void OpenFileBuffer(const std::string& filename) {
     active_file_idx = static_cast<int>(open_files.size() - 1);
 }
 
+void InitializeEditor(int argc, char **argv) {
+    if (argc >= 2) {
+        for (int i = 1; i < argc; ++i) OpenFileBuffer(argv[i]);
+    } else {
+        OpenFileBuffer("");
+    }
+}
+
 void LoadDirectoryFiles(void) {
     file_list.clear();
     DIR *dir = opendir(".");
@@ -212,7 +232,7 @@ void SaveFile(void) {
     if (file.is_open()) {
         for (size_t i = 0; i < cur.lines.size(); ++i) file << cur.lines[i] << "\n";
         file.close();
-        cur.is_dirty = false; // Guardado com sucesso!
+        cur.is_dirty = false;
     }
 }
 
@@ -230,14 +250,13 @@ void ScrollEditor(void) {
     if (cur.cursor_y >= cur.row_offset + edit_window_height) cur.row_offset = cur.cursor_y - edit_window_height + 1;
 }
 
-// --- NOVO MOTOR DE RENDERIZAÇÃO INTELIGENTE DE SINTAXE (TRUE COLOR) ---
+// --- LEXER / PARSER DE SINTAXE REALISTA ---
 void RenderHighlightedLine(const std::string& line)
 {
     std::vector<std::string> chars = SplitUtf8String(line);
     std::string current_word = "";
     bool in_string = false;
 
-    // Detectar Directivas de Pré-processador
     if (!chars.empty() and chars[0] == "#") {
         std::cout << RGB_PREPROC << line << RGB_RESET;
         return;
@@ -246,7 +265,6 @@ void RenderHighlightedLine(const std::string& line)
     for (size_t j = 0; j < chars.size(); ++j) {
         std::string c = chars[j];
 
-        // Análise de Comentários em Linha Única (//)
         if (!in_string and j + 1 < chars.size() and c == "/" and chars[j + 1] == "/") {
             std::cout << RGB_COMMENT;
             for (size_t rem = j; rem < chars.size(); ++rem) std::cout << chars[rem];
@@ -254,7 +272,6 @@ void RenderHighlightedLine(const std::string& line)
             return;
         }
 
-        // Análise de Strings Nativas ("texto")
         if (c == "\"") {
             if (in_string) {
                 current_word += c;
@@ -262,7 +279,6 @@ void RenderHighlightedLine(const std::string& line)
                 current_word = "";
                 in_string = false;
             } else {
-                // Descarrega palavra anterior antes de entrar na string
                 std::cout << RGB_TEXT << current_word << RGB_RESET;
                 current_word = "\"";
                 in_string = true;
@@ -275,7 +291,6 @@ void RenderHighlightedLine(const std::string& line)
             continue;
         }
 
-        // Delimitadores Padrão de Lexer
         if (c == " " or c == "(" or c == ")" or c == "{" or c == "}" or c == ";" or c == "," or c == "<" or c == ">" or c == "\t") {
             if (is_in_list(current_word, keywords, 13)) std::cout << RGB_KEYWORD << current_word << RGB_RESET;
             else if (is_in_list(current_word, datatypes, 8)) std::cout << RGB_DATATYPE << current_word << RGB_RESET;
@@ -290,12 +305,12 @@ void RenderHighlightedLine(const std::string& line)
             current_word += c;
         }
     }
-    // Descarrega o resto do buffer de palavras pendentes na linha
     if (is_in_list(current_word, keywords, 13)) std::cout << RGB_KEYWORD << current_word << RGB_RESET;
     else if (is_in_list(current_word, datatypes, 8)) std::cout << RGB_DATATYPE << current_word << RGB_RESET;
     else std::cout << RGB_TEXT << current_word << RGB_RESET;
 }
 
+// --- PIPELINE DE RENDERIZAÇÃO DE JANELA (VIEWPORT FIXA) ---
 void RefreshScreen(void)
 {
     GetTerminalSize();
@@ -316,7 +331,7 @@ void RefreshScreen(void)
         return;
     }
 
-    // 1. RENDERIZAR TABLINE SUPERIOR (FIXA)
+    // 1. HEADER / TABLINE SUPERIOR
     std::cout << RGB_TAB_BG << " ";
     for (size_t i = 0; i < open_files.size(); ++i) {
         std::string dirty_flag = open_files[i].is_dirty ? " \x1b[31m[+]\x1b[0m" : "";
@@ -336,7 +351,7 @@ void RefreshScreen(void)
     int line_number_width = 6;
     int edit_window_height = screen_rows - 3;
 
-    // 2. RENDERIZAR VIEWPORT DINÂMICO
+    // 2. CONTEÚDO PRINCIPAL (VIEWPORT)
     for (int i = 0; i < edit_window_height; ++i)
     {
         int file_line_idx = i + cur.row_offset;
@@ -347,7 +362,6 @@ void RefreshScreen(void)
             continue;
         }
 
-        // Render do Side Drawer
         if (drawer_open) {
             if (i < static_cast<int>(open_files.size())) {
                 std::string name = open_files[i].name.empty() ? "*Sem Nome*" : open_files[i].name;
@@ -362,14 +376,12 @@ void RefreshScreen(void)
             }
         }
 
-        // Render da Calha de Números (Gutter)
         std::cout << RGB_GUTTER;
         if (file_line_idx + 1 < 10) std::cout << "   " << (file_line_idx + 1) << " │ ";
-        else if (file_line_idx + 1 < 100) std::cout << "  " << (file_line_idx + 1) << " │_";
+        else if (file_line_idx + 1 < 100) std::cout << "  " << (file_line_idx + 1) << " │ ";
         else std::cout << " " << (file_line_idx + 1) << " │ ";
         std::cout << RGB_RESET;
 
-        // Calcular posição real do cursor
         if (file_line_idx == cur.cursor_y) {
             std::vector<std::string> l_chars = SplitUtf8String(cur.lines[file_line_idx]);
             visual_cursor_x = drawer_width + line_number_width;
@@ -378,13 +390,12 @@ void RefreshScreen(void)
             }
         }
 
-        // Renderização com Engine de Cores Avançada
         RenderHighlightedLine(cur.lines[file_line_idx]);
         std::cout << "\x1b[K\r\n";
     }
 
-    // 3. STATUSLINE MODERNIZADA (LazyVim Style)
-    std::cout << RGB_GUTTER << std::string(screen_cols, '─') << RGB_RESET << "\r\n";
+    // 3. FOOTER / STATUSLINE ESTILO LAZYVIM
+    std::cout << RGB_GUTTER << BuildHorizontalLine(screen_cols) << RGB_RESET << "\r\n";
     std::cout << "\x1b[48;2;49;50;68m\x1b[38;2;17;17;27;1m NORMAL " << RGB_TAB_BG << " \x1b[38;2;205;214;244m" 
               << (cur.name.empty() ? "[Sem Nome]" : cur.name) << (cur.is_dirty ? " \x1b[31m[+]" : "")
               << " \x1b[38;2;108;112;134m│\x1b[38;2;137;220;235m Ln " << (cur.cursor_y + 1) << ", Col " << (cur.cursor_x + 1)
@@ -393,8 +404,6 @@ void RefreshScreen(void)
     int physical_cursor_y = (cur.cursor_y - cur.row_offset) + 2; 
     std::cout << "\x1b[" << physical_cursor_y << ";" << (visual_cursor_x + 1) << "H" << "\x1b[?25h" << std::flush;
 }
-
-// --- CONTROLO DE INPUTS E ATALHOS ---
 
 char32_t    ReadKey(void)
 {
@@ -462,6 +471,51 @@ void    DeleteChar(void)
     }
 }
 
+// --- INTEGRAÇÃO DO MODELO DE IA ASSISTENTE ---
+void    InvokeAIAssistant(void)
+{
+    FileBuffer& cur = open_files[active_file_idx];
+    if (cur.lines.empty() or cur.cursor_y >= static_cast<int>(cur.lines.size())) return;
+
+    std::string prompt = cur.lines[cur.cursor_y];
+    if (prompt.empty() or prompt.find_first_not_of(" \t\r\n") == std::string::npos) return;
+
+    std::string escaped_prompt = "";
+    for (size_t i = 0; i < prompt.length(); ++i) {
+        if (prompt[i] == '\'') escaped_prompt += "'\\''";
+        else escaped_prompt += prompt[i];
+    }
+
+    std::string cmd = "./ss_ai_bridge.py '" + escaped_prompt + "'";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (not pipe) return;
+
+    SaveUndoState(cur);
+
+    char buffer[512];
+    int insert_y = cur.cursor_y + 1;
+    std::string ai_line = "";
+
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        std::string chunk(buffer);
+        for (size_t i = 0; i < chunk.length(); ++i) {
+            if (chunk[i] == '\n' or chunk[i] == '\r') {
+                cur.lines.insert(cur.lines.begin() + insert_y, ai_line);
+                insert_y++;
+                ai_line = "";
+            } else {
+                ai_line += chunk[i];
+            }
+        }
+    }
+    if (not ai_line.empty()) cur.lines.insert(cur.lines.begin() + insert_y, ai_line);
+
+    pclose(pipe);
+    cur.is_dirty = true;
+    cur.cursor_y = insert_y - 1;
+    cur.cursor_x = 0;
+}
+
 char32_t    ProcessKeyPress(char32_t c)
 {
     if (c == QUIT_COMMAND) return (QUIT_COMMAND);
@@ -472,6 +526,11 @@ char32_t    ProcessKeyPress(char32_t c)
     }
     if (c == PREV_TAB_COMMAND and current_mode == MODE_EDITOR) {
         if (not open_files.empty()) active_file_idx = (active_file_idx - 1 + open_files.size()) % open_files.size();
+        return (c);
+    }
+
+    if (c == AI_COMMAND and current_mode == MODE_EDITOR) {
+        InvokeAIAssistant();
         return (c);
     }
 
