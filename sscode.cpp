@@ -6,7 +6,7 @@
 /* By: Ser Superior <marcioeduine@gmail.com>       +#+  +:+       +#+        */
 /* +#+#+#+#+#+   +#+           */
 /* Created: 2026/07/02 01:38:25 by Ser Superior          #+#    #+#             */
-/* Updated: 2026/07/02 07:10:00 by Ser Superior         ###   ########.fr       */
+/* Updated: 2026/07/02 16:20:00 by Ser Superior         ###   ########.fr       */
 /* */
 /* ************************************************************************** */
 
@@ -37,7 +37,8 @@
 
 enum e_editorMode {
     MODE_EDITOR,
-    MODE_FILE_MANAGER
+    MODE_FILE_MANAGER,
+    MODE_AI_PROMPT
 };
 
 enum e_editorKey {
@@ -49,7 +50,8 @@ enum e_editorKey {
     PAGE_DOWN,
     HOME_KEY,
     END_KEY,
-    DEL_KEY
+    DEL_KEY,
+    MOUSE_EVENT_IGNORE
 };
 
 struct FileBuffer {
@@ -62,7 +64,7 @@ struct FileBuffer {
     bool                     is_dirty;
 };
 
-// Estado Global do Sistema
+// --- ESTADO GLOBAL ---
 struct termios          orig_termios;
 std::vector<FileBuffer> open_files;
 int                     active_file_idx = 0;
@@ -71,6 +73,11 @@ bool                    drawer_open = false;
 int                     screen_rows = 0;
 int                     screen_cols = 0;
 
+// --- SUBSISTEMA DA JANELA DE IA ---
+bool                     ai_panel_open = false;
+std::vector<std::string> ai_response_lines;
+std::string              ai_current_input = "";
+
 std::vector<std::string> clipboard;
 std::vector<std::string> file_list;
 int                      selected_file_idx = 0;
@@ -78,7 +85,7 @@ int                      selected_file_idx = 0;
 const char* keywords[] = { "switch", "if", "else", "while", "for", "break", "return", "define", "include", "and", "or", "not", "xor" };
 const char* datatypes[] = { "int", "char", "void", "struct", "class", "bool", "char32_t", "size_t" };
 
-// --- CONFIGURAÇÃO DA PALETA TRUE COLOR (RGB 24-BITS) ---
+// --- PALETA DE CORES TRUE COLOR (RGB 24-BITS) ---
 #define RGB_BG_DARK   "\x1b[48;2;30;30;46m"
 #define RGB_TAB_BG    "\x1b[48;2;24;24;37m"
 #define RGB_TAB_ACT   "\x1b[48;2;137;180;250;38;2;17;17;27;1m"
@@ -90,10 +97,11 @@ const char* datatypes[] = { "int", "char", "void", "struct", "class", "bool", "c
 #define RGB_PREPROC   "\x1b[38;2;245;194;231m"
 #define RGB_NUMBER    "\x1b[38;2;2fab;242m"
 #define RGB_GUTTER    "\x1b[38;2;88;91;112m"
+#define RGB_AI_PANEL  "\x1b[48;2;40;40;60m"
+#define RGB_AI_TEXT   "\x1b[38;2;198;160;246m"
 #define RGB_RESET     "\x1b[0m"
 
-// --- FUNÇÕES DE SUPORTE MANIPULAÇÃO UTF-8 ---
-
+// --- MANIPULAÇÃO UTF-8 ---
 int GetUtf8CharLength(unsigned char c) {
     if ((c & 0x80) == 0) return 1;
     if ((c & 0xE0) == 0xC0) return 2;
@@ -118,22 +126,13 @@ std::vector<std::string> SplitUtf8String(const std::string& str) {
     return chars;
 }
 
-std::string BuildHorizontalLine(int width) {
-    std::string line = "";
-    for (int i = 0; i < width; ++i) {
-        line += "─"; // Aqui passa como string literal literal, o que é perfeitamente válido
-    }
-    return line;
-}
-
 std::string JoinUtf8Chars(const std::vector<std::string>& chars) {
     std::string out = "";
     for (size_t i = 0; i < chars.size(); ++i) out += chars[i];
     return out;
 }
 
-// --- ENGINE DE GESTÃO DO TERMINAL ---
-
+// --- ENGINE DO TERMINAL ---
 void GetTerminalSize(void) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 or ws.ws_col == 0) {
@@ -159,6 +158,10 @@ void enableRawMode(void) {
     raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
     raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
     raw.c_oflag &= ~(OPOST);
+    
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
     GetTerminalSize();
 }
@@ -250,24 +253,70 @@ void ScrollEditor(void) {
     if (cur.cursor_y >= cur.row_offset + edit_window_height) cur.row_offset = cur.cursor_y - edit_window_height + 1;
 }
 
-// --- LEXER / PARSER DE SINTAXE REALISTA ---
-void RenderHighlightedLine(const std::string& line)
+std::string BuildHorizontalLine(int width) {
+    std::string line = "";
+    for (int i = 0; i < width; ++i) line += "─";
+    return line;
+}
+
+// --- ALGORITMO DE WORD WRAP DINÂMICO ---
+void WrapText(const std::string& text, int max_width, std::vector<std::string>& output) {
+    std::vector<std::string> words;
+    std::string current_word = "";
+    
+    for (size_t i = 0; i < text.length(); ++i) {
+        if (text[i] == '\n') {
+            if (!current_word.empty()) { words.push_back(current_word); current_word = ""; }
+            words.push_back("\n");
+        } else if (text[i] == ' ') {
+            if (!current_word.empty()) { words.push_back(current_word); current_word = ""; }
+            words.push_back(" ");
+        } else {
+            current_word += text[i];
+        }
+    }
+    if (!current_word.empty()) words.push_back(current_word);
+
+    std::string current_line = "";
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (words[i] == "\n") {
+            output.push_back(current_line);
+            current_line = "";
+        } else {
+            if (current_line.length() + words[i].length() > static_cast<size_t>(max_width)) {
+                if (!current_line.empty()) output.push_back(current_line);
+                current_line = (words[i] == " ") ? "" : words[i];
+            } else {
+                current_line += words[i];
+            }
+        }
+    }
+    if (!current_line.empty()) output.push_back(current_line);
+}
+
+// --- LEXER DE SINTAXE REALISTA ---
+void RenderHighlightedLine(const std::string& line, int max_width)
 {
     std::vector<std::string> chars = SplitUtf8String(line);
     std::string current_word = "";
     bool in_string = false;
+    int current_printed_width = 0;
 
     if (!chars.empty() and chars[0] == "#") {
-        std::cout << RGB_PREPROC << line << RGB_RESET;
+        std::cout << RGB_PREPROC << (line.length() > static_cast<size_t>(max_width) ? line.substr(0, max_width) : line) << RGB_RESET;
         return;
     }
 
     for (size_t j = 0; j < chars.size(); ++j) {
+        if (current_printed_width >= max_width) break;
         std::string c = chars[j];
 
         if (!in_string and j + 1 < chars.size() and c == "/" and chars[j + 1] == "/") {
             std::cout << RGB_COMMENT;
-            for (size_t rem = j; rem < chars.size(); ++rem) std::cout << chars[rem];
+            for (size_t rem = j; rem < chars.size() and current_printed_width < max_width; ++rem) {
+                std::cout << chars[rem];
+                current_printed_width++;
+            }
             std::cout << RGB_RESET;
             return;
         }
@@ -276,10 +325,12 @@ void RenderHighlightedLine(const std::string& line)
             if (in_string) {
                 current_word += c;
                 std::cout << RGB_STRING << current_word << RGB_RESET;
+                current_printed_width += SplitUtf8String(current_word).size();
                 current_word = "";
                 in_string = false;
             } else {
                 std::cout << RGB_TEXT << current_word << RGB_RESET;
+                current_printed_width += SplitUtf8String(current_word).size();
                 current_word = "\"";
                 in_string = true;
             }
@@ -298,19 +349,63 @@ void RenderHighlightedLine(const std::string& line)
                 std::cout << RGB_NUMBER << current_word << RGB_RESET;
             else std::cout << RGB_TEXT << current_word << RGB_RESET;
 
-            if (c == "\t") std::cout << "    ";
-            else std::cout << RGB_TEXT << c << RGB_RESET;
+            current_printed_width += SplitUtf8String(current_word).size();
+
+            if (c == "\t") { std::cout << "    "; current_printed_width += 4; }
+            else { std::cout << RGB_TEXT << c << RGB_RESET; current_printed_width++; }
             current_word = "";
         } else {
             current_word += c;
         }
     }
-    if (is_in_list(current_word, keywords, 13)) std::cout << RGB_KEYWORD << current_word << RGB_RESET;
-    else if (is_in_list(current_word, datatypes, 8)) std::cout << RGB_DATATYPE << current_word << RGB_RESET;
-    else std::cout << RGB_TEXT << current_word << RGB_RESET;
+    if (current_printed_width < max_width) {
+        if (is_in_list(current_word, keywords, 13)) std::cout << RGB_KEYWORD << current_word << RGB_RESET;
+        else if (is_in_list(current_word, datatypes, 8)) std::cout << RGB_DATATYPE << current_word << RGB_RESET;
+        else std::cout << RGB_TEXT << current_word << RGB_RESET;
+        current_printed_width += SplitUtf8String(current_word).size();
+    }
+
+    for (int fill = current_printed_width; fill < max_width; ++fill) std::cout << " ";
 }
 
-// --- PIPELINE DE RENDERIZAÇÃO DE JANELA (VIEWPORT FIXA) ---
+// --- EXECUÇÃO DO PROMPT DA IA ---
+void    ExecuteAIPrompt(void)
+{
+    if (ai_current_input.empty() or ai_current_input.find_first_not_of(" \t\r\n") == std::string::npos) return;
+
+    std::string escaped_prompt = "";
+    for (size_t i = 0; i < ai_current_input.length(); ++i) {
+        if (ai_current_input[i] == '\'') escaped_prompt += "'\\''";
+        else escaped_prompt += ai_current_input[i];
+    }
+
+    std::cout << "\x1b[" << screen_rows << ";1H\x1b[48;2;235;160;0m\x1b[38;2;0;0;0;1m 󱚥 A PROCESSAR IA COM CONTEXTO... \x1b[0m\x1b[K" << std::flush;
+
+    std::string cmd = "./ss_ai_bridge.py '" + escaped_prompt + "' 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (not pipe) return;
+
+    ai_response_lines.clear();
+    char buffer[512];
+    std::string full_response = "";
+
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        full_response += buffer;
+    }
+    pclose(pipe);
+
+    int drawer_width = drawer_open ? 24 : 0;
+    int available_cols = screen_cols - drawer_width;
+    int ai_window_width = available_cols - (available_cols / 2);
+    int effective_ai_text_width = ai_window_width - 3;
+
+    WrapText(full_response, effective_ai_text_width, ai_response_lines);
+
+    ai_panel_open = true;
+    current_mode = MODE_EDITOR;
+}
+
+// --- PIPELINE DE RENDERIZAÇÃO ---
 void RefreshScreen(void)
 {
     GetTerminalSize();
@@ -331,36 +426,32 @@ void RefreshScreen(void)
         return;
     }
 
-    // 1. HEADER / TABLINE SUPERIOR
+    // 1. BARRA DE DIALECTO / TABLINE SUPERIOR
     std::cout << RGB_TAB_BG << " ";
     for (size_t i = 0; i < open_files.size(); ++i) {
         std::string dirty_flag = open_files[i].is_dirty ? " \x1b[31m[+]\x1b[0m" : "";
         std::string tab_name = open_files[i].name.empty() ? "*Sem Nome*" : open_files[i].name;
         
-        if (static_cast<int>(i) == active_file_idx) {
-            std::cout << RGB_TAB_ACT << " " << tab_name << dirty_flag << " " << RGB_TAB_BG;
-        } else {
-            std::cout << RGB_GUTTER << "│ " << RGB_TEXT << tab_name << dirty_flag << " ";
-        }
+        if (static_cast<int>(i) == active_file_idx) std::cout << RGB_TAB_ACT << " " << tab_name << dirty_flag << " " << RGB_TAB_BG;
+        else std::cout << RGB_GUTTER << "│ " << RGB_TEXT << tab_name << dirty_flag << " ";
     }
     std::cout << "\x1b[K" << RGB_RESET << "\r\n";
 
     FileBuffer& cur = open_files[active_file_idx];
     int visual_cursor_x = 0;
     int drawer_width = drawer_open ? 24 : 0;
-    int line_number_width = 6;
+    int line_number_width = 7;
     int edit_window_height = screen_rows - 3;
 
-    // 2. CONTEÚDO PRINCIPAL (VIEWPORT)
+    int available_cols = screen_cols - drawer_width;
+    int code_window_width = ai_panel_open ? (available_cols / 2) : available_cols;
+    int ai_window_width = available_cols - code_window_width;
+    int effective_code_text_width = code_window_width - line_number_width;
+
+    // 2. VIEWPORTS LATERALIS
     for (int i = 0; i < edit_window_height; ++i)
     {
         int file_line_idx = i + cur.row_offset;
-
-        if (file_line_idx >= static_cast<int>(cur.lines.size())) {
-            if (drawer_open) std::cout << "                  " << RGB_GUTTER << "│" << RGB_RESET << " ";
-            std::cout << RGB_GUTTER << "~\x1b[K" << RGB_RESET << "\r\n";
-            continue;
-        }
 
         if (drawer_open) {
             if (i < static_cast<int>(open_files.size())) {
@@ -376,33 +467,64 @@ void RefreshScreen(void)
             }
         }
 
-        std::cout << RGB_GUTTER;
-        if (file_line_idx + 1 < 10) std::cout << "   " << (file_line_idx + 1) << " │ ";
-        else if (file_line_idx + 1 < 100) std::cout << "  " << (file_line_idx + 1) << " │ ";
-        else std::cout << " " << (file_line_idx + 1) << " │ ";
-        std::cout << RGB_RESET;
+        // JANELA DE CÓDIGO
+        if (file_line_idx >= static_cast<int>(cur.lines.size())) {
+            std::cout << RGB_GUTTER << "~\x1b[0m";
+            for (int space = 1; space < code_window_width; ++space) std::cout << " ";
+        } else {
+            std::cout << RGB_GUTTER;
+            if (file_line_idx + 1 < 10) std::cout << "   " << (file_line_idx + 1) << " │ ";
+            else if (file_line_idx + 1 < 100) std::cout << "  " << (file_line_idx + 1) << " │ ";
+            else std::cout << " " << (file_line_idx + 1) << " │ ";
+            std::cout << RGB_RESET;
 
-        if (file_line_idx == cur.cursor_y) {
-            std::vector<std::string> l_chars = SplitUtf8String(cur.lines[file_line_idx]);
-            visual_cursor_x = drawer_width + line_number_width;
-            for (int k = 0; k < cur.cursor_x and k < static_cast<int>(l_chars.size()); ++k) {
-                if (l_chars[k] == "\t") visual_cursor_x += 4; else visual_cursor_x += 1;
+            if (file_line_idx == cur.cursor_y) {
+                std::vector<std::string> l_chars = SplitUtf8String(cur.lines[file_line_idx]);
+                visual_cursor_x = drawer_width + line_number_width;
+                for (int k = 0; k < cur.cursor_x and k < static_cast<int>(l_chars.size()); ++k) {
+                    if (l_chars[k] == "\t") visual_cursor_x += 4; else visual_cursor_x += 1;
+                }
             }
+            RenderHighlightedLine(cur.lines[file_line_idx], effective_code_text_width);
         }
 
-        RenderHighlightedLine(cur.lines[file_line_idx]);
+        // JANELA DA IA RESPONSIVA
+        if (ai_panel_open) {
+            std::cout << RGB_GUTTER << "│" << RGB_AI_PANEL << " " << RGB_AI_TEXT;
+            int effective_ai_text_width = ai_window_width - 3;
+            
+            if (i < static_cast<int>(ai_response_lines.size())) {
+                std::string ai_line = ai_response_lines[i];
+                if (ai_line.length() > static_cast<size_t>(effective_ai_text_width)) {
+                    std::cout << ai_line.substr(0, effective_ai_text_width);
+                } else {
+                    std::cout << ai_line;
+                    for (int fill = ai_line.length(); fill < effective_ai_text_width; ++fill) std::cout << " ";
+                }
+            } else {
+                for (int fill = 0; fill < effective_ai_text_width; ++fill) std::cout << " ";
+            }
+            std::cout << RGB_RESET;
+        }
         std::cout << "\x1b[K\r\n";
     }
 
-    // 3. FOOTER / STATUSLINE ESTILO LAZYVIM
+    // 3. BARRA INFERIOR / INTERFAÇO DE PROMPT
     std::cout << RGB_GUTTER << BuildHorizontalLine(screen_cols) << RGB_RESET << "\r\n";
-    std::cout << "\x1b[48;2;49;50;68m\x1b[38;2;17;17;27;1m NORMAL " << RGB_TAB_BG << " \x1b[38;2;205;214;244m" 
-              << (cur.name.empty() ? "[Sem Nome]" : cur.name) << (cur.is_dirty ? " \x1b[31m[+]" : "")
-              << " \x1b[38;2;108;112;134m│\x1b[38;2;137;220;235m Ln " << (cur.cursor_y + 1) << ", Col " << (cur.cursor_x + 1)
-              << " \x1b[38;2;108;112;134m│\x1b[38;2;249;226;175m UTF-8 " << RGB_RESET << "\x1b[K";
+    
+    if (current_mode == MODE_AI_PROMPT) {
+        std::cout << "\x1b[48;2;198;160;246m\x1b[38;2;17;17;27;1m 󱚥 INSPECÇÃO / PEDIDO À IA: \x1b[48;2;49;50;68m\x1b[38;2;255;255;255m " 
+                  << ai_current_input << "\x1b[K" << RGB_RESET;
+        std::cout << "\x1b[" << screen_rows << ";" << (29 + ai_current_input.length()) << "H\x1b[?25h" << std::flush;
+    } else {
+        std::cout << "\x1b[48;2;49;50;68m\x1b[38;2;17;17;27;1m MODO DIRECTO " << RGB_TAB_BG << " \x1b[38;2;205;214;244m" 
+                  << (cur.name.empty() ? "[Sem Nome]" : cur.name) << (cur.is_dirty ? " \x1b[31m[+]" : "")
+                  << " \x1b[38;2;108;112;134m│\x1b[38;2;137;220;235m Linha " << (cur.cursor_y + 1) << ", Coluna " << (cur.cursor_x + 1)
+                  << " \x1b[38;2;108;112;134m│\x1b[38;2;198;160;246m Ctrl+G: IA \x1b[0m\x1b[K";
 
-    int physical_cursor_y = (cur.cursor_y - cur.row_offset) + 2; 
-    std::cout << "\x1b[" << physical_cursor_y << ";" << (visual_cursor_x + 1) << "H" << "\x1b[?25h" << std::flush;
+        int physical_cursor_y = (cur.cursor_y - cur.row_offset) + 2; 
+        std::cout << "\x1b[" << physical_cursor_y << ";" << (visual_cursor_x + 1) << "H" << "\x1b[?25h" << std::flush;
+    }
 }
 
 char32_t    ReadKey(void)
@@ -411,11 +533,27 @@ char32_t    ReadKey(void)
     if (read(STDIN_FILENO, &c, 1) == -1) exit(1);
 
     if (c == '\x1b') {
-        char seq[4];
+        char seq[5];
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 
         if (seq[0] == '[') {
+            // DETECÇÃO E APAGAMENTO DE CARACTERES PARASITAS DO RATO (WHEEL / MOUSE SEQS)
+            if (seq[1] == 'M' or seq[1] == '<') {
+                char mouse_data[4];
+                // Eventos normais estendidos lêem os bytes adicionais para limpar o buffer de leitura
+                if (seq[1] == 'M') {
+                    read(STDIN_FILENO, &mouse_data[0], 1);
+                    read(STDIN_FILENO, &mouse_data[1], 1);
+                    read(STDIN_FILENO, &mouse_data[2], 1);
+                } else {
+                    // Formato SGR termina com 'm' ou 'M'
+                    char m_head = 0;
+                    while (read(STDIN_FILENO, &m_head, 1) == 1 and m_head != 'm' and m_head != 'M');
+                }
+                return MOUSE_EVENT_IGNORE;
+            }
+
             if (seq[1] >= '0' and seq[1] <= '9') {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
                 if (seq[2] == '~') {
@@ -471,66 +609,57 @@ void    DeleteChar(void)
     }
 }
 
-// --- INTEGRAÇÃO DO MODELO DE IA ASSISTENTE ---
-void    InvokeAIAssistant(void)
-{
-    FileBuffer& cur = open_files[active_file_idx];
-    if (cur.lines.empty() or cur.cursor_y >= static_cast<int>(cur.lines.size())) return;
-
-    std::string prompt = cur.lines[cur.cursor_y];
-    if (prompt.empty() or prompt.find_first_not_of(" \t\r\n") == std::string::npos) return;
-
-    std::string escaped_prompt = "";
-    for (size_t i = 0; i < prompt.length(); ++i) {
-        if (prompt[i] == '\'') escaped_prompt += "'\\''";
-        else escaped_prompt += prompt[i];
-    }
-
-    std::string cmd = "./ss_ai_bridge.py '" + escaped_prompt + "'";
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (not pipe) return;
-
-    SaveUndoState(cur);
-
-    char buffer[512];
-    int insert_y = cur.cursor_y + 1;
-    std::string ai_line = "";
-
-    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        std::string chunk(buffer);
-        for (size_t i = 0; i < chunk.length(); ++i) {
-            if (chunk[i] == '\n' or chunk[i] == '\r') {
-                cur.lines.insert(cur.lines.begin() + insert_y, ai_line);
-                insert_y++;
-                ai_line = "";
-            } else {
-                ai_line += chunk[i];
-            }
-        }
-    }
-    if (not ai_line.empty()) cur.lines.insert(cur.lines.begin() + insert_y, ai_line);
-
-    pclose(pipe);
-    cur.is_dirty = true;
-    cur.cursor_y = insert_y - 1;
-    cur.cursor_x = 0;
-}
-
 char32_t    ProcessKeyPress(char32_t c)
 {
+    if (c == MOUSE_EVENT_IGNORE) return (c);
+
+    // Activação e Desactivação do Modo de Conversação com a IA
+    if (c == AI_COMMAND) {
+        if (current_mode == MODE_AI_PROMPT or ai_panel_open) {
+            current_mode = MODE_EDITOR;
+            ai_panel_open = false;
+            std::string clean_cmd = "./ss_ai_bridge.py '__CLEAR_CONTEXT__' > /dev/null 2>&1";
+            system(clean_cmd.c_str());
+        } else {
+            current_mode = MODE_AI_PROMPT;
+            ai_current_input = "";
+        }
+        return (c);
+    }
+
     if (c == QUIT_COMMAND) return (QUIT_COMMAND);
 
-    if (c == NEXT_TAB_COMMAND and current_mode == MODE_EDITOR) {
+    // MODO PROMPT DA IA
+    if (current_mode == MODE_AI_PROMPT) {
+        if (c == '\r') {
+            ExecuteAIPrompt();
+        } else if (c == 127 or c == CTRL_KEY('h')) {
+            if (not ai_current_input.empty()) 
+                ai_current_input = ai_current_input.substr(0, ai_current_input.length() - 1);
+        } else if (c == '\x1b') {
+            current_mode = MODE_EDITOR;
+        } else if (c >= 32 and c < 127) {
+            ai_current_input += static_cast<char>(c);
+        }
+        return (c);
+    }
+
+    // MODO GESTOR DE FICHEIROS
+    if (current_mode == MODE_FILE_MANAGER) {
+        if (c == 'k' or c == ARROW_UP) { if (selected_file_idx > 0) selected_file_idx--; }
+        else if (c == 'j' or c == ARROW_DOWN) { if (selected_file_idx < static_cast<int>(file_list.size() - 1)) selected_file_idx++; }
+        else if (c == '\r') {
+            if (!file_list.empty()) { OpenFileBuffer(file_list[selected_file_idx]); current_mode = MODE_EDITOR; }
+        }
+        return (c);
+    }
+
+    if (c == NEXT_TAB_COMMAND) {
         if (not open_files.empty()) active_file_idx = (active_file_idx + 1) % open_files.size();
         return (c);
     }
-    if (c == PREV_TAB_COMMAND and current_mode == MODE_EDITOR) {
+    if (c == PREV_TAB_COMMAND) {
         if (not open_files.empty()) active_file_idx = (active_file_idx - 1 + open_files.size()) % open_files.size();
-        return (c);
-    }
-
-    if (c == AI_COMMAND and current_mode == MODE_EDITOR) {
-        InvokeAIAssistant();
         return (c);
     }
 
@@ -542,15 +671,6 @@ char32_t    ProcessKeyPress(char32_t c)
 
     if (c == TOGGLE_DRAWER) {
         drawer_open = !drawer_open;
-        return (c);
-    }
-
-    if (current_mode == MODE_FILE_MANAGER) {
-        if (c == 'k' or c == ARROW_UP) { if (selected_file_idx > 0) selected_file_idx--; }
-        else if (c == 'j' or c == ARROW_DOWN) { if (selected_file_idx < static_cast<int>(file_list.size() - 1)) selected_file_idx++; }
-        else if (c == '\r') {
-            if (!file_list.empty()) { OpenFileBuffer(file_list[selected_file_idx]); current_mode = MODE_EDITOR; }
-        }
         return (c);
     }
 
