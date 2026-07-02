@@ -69,6 +69,7 @@ vcpkg_installed/
 **/.git
 */.git
 .git
+.github
 
 # Local IDE builds and third party libs
 SSCodeIDE
