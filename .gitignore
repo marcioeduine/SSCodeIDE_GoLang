@@ -65,5 +65,13 @@ vcpkg_installed/
 *.dwo
 
 # test output & cache
-Testing/
-.cache/
+**/*/.git
+**/.git
+*/.git
+.git
+
+# Local IDE builds and third party libs
+SSCodeIDE
+third_party/
+*.o
+

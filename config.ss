@@ -1,0 +1,24 @@
+# SSCodeIDE Configuration File
+font = FiraCode-Regular.ttf
+font_bold = FiraCode-Bold.ttf
+font_size = 24
+font_spacing = 1.0
+vertical_stride = 24
+start_x = 20
+start_y = 25
+tab_size = 4
+cursor_trail = 1
+cursor_trail_decay_min = 0.1
+cursor_trail_decay_max = 0.4
+cursor_trail_threshold = 3.0
+cursor_trail_decay_speed = 2.0
+bg_color = #000000e6
+text_color = #cdd6f4ff
+comment_color = #9a9996ff
+keyword_color = #e0569fff
+type_color = #5bc8afff
+string_color = #ffa348ff
+cursor_color = #f5c2e7ff
+selection_color = #cdd6f428
+padding_vertical = 60
+padding_horizontal = 20
