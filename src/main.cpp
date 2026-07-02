@@ -383,7 +383,7 @@ static std::vector<t_text>	wrapText(Font font, const t_text& text, float maxWidt
 // AI prompt assembler ChatML
 static t_text	buildChatPrompt(const std::vector<ChatMessage>& history, const t_text& currentPrompt)
 {
-	t_text	p("<|im_start|>system\nYou are a helpful C++ coding assistant integrated in the SSCodeIDE. Keep answers extremely short and concise.<|im_end|>\n");
+	t_text	p("<|im_start|>system\nTu és um assistente de programação em C++ integrado no SSCodeIDE. Deves responder SEMPRE em português de Portugal (pt-PT) usando de forma estrita as regras gramaticais e ortográficas do antigo acordo ortográfico de 1945 (pré-acordo de 1990 / 2012), preservando todas as consoantes mudas (como acção, directo, projecto, correctamente, óptimo, selecção, etc.). Trata o utilizador por \"tu\". As tuas respostas devem ser curtas, directas ao assunto e extremamente concisas.<|im_end|>\n");
 	for (const auto& msg : history)
 		p += "<|im_start|>" + msg.role + "\n" + msg.text + "<|im_end|>\n";
 	if (!currentPrompt.empty())
@@ -411,13 +411,13 @@ static void	aiWorker(t_text userPrompt)
 		pfile.close();
 	}
 
-	t_text	execCmd("third_party/llama.cpp/build/bin/llama-cli -m models/qwen-0.5b-coder.gguf -f " + promptPath + " -n 256 --temp 0.2 -c 512 --no-display-prompt -r \"<|im_end|>\" 2>/dev/null");
+	t_text	execCmd("third_party/llama.cpp/build/bin/llama-completion -m models/qwen-0.5b-coder.gguf -f " + promptPath + " -n 256 --temp 0.2 -c 512 --no-display-prompt --log-disable 2>/dev/null");
 	FILE*	pipe(popen(execCmd.c_str(), "r"));
 	if (!pipe)
 	{
 		std::lock_guard<std::mutex>	lock(chatMutex);
 		chatHistory.pop_back();
-		chatHistory.push_back(ChatMessage{"assistant", "[Error running AI inference]"});
+		chatHistory.push_back(ChatMessage{"assistant", "[Erro ao executar a inferência de IA]"});
 		isAiThinking = false;
 		unlink(promptPath.c_str());
 		return;
@@ -702,7 +702,7 @@ int	main(int argc, char* argv[])
 	{
 		lines.push_back("class FileHandler {");
 		lines.push_back("public:");
-		lines.push_back("    // Fira Code font loaded successfully by default.");
+		lines.push_back("    // Fonte Fira Code carregada com sucesso por defeito.");
 		lines.push_back("};");
 	}
 
@@ -714,7 +714,7 @@ int	main(int argc, char* argv[])
 	resizeTermGrid(24, 80);
 
 	// Pre-fill welcome message in Chat History
-	chatHistory.push_back(ChatMessage{"assistant", "Olá! Sou o teu assistente de IA local. Podes usar F2 para abrir/fechar este painel, e F3 para falar no microfone!"});
+	chatHistory.push_back(ChatMessage{"assistant", "Olá! Sou o teu assistente de IA local. Podes utilizar F2 para abrir ou fechar este painel, e F3 para falar no microfone! Se tiveres alguma selecção no código, podes obter uma explicação directa."});
 
 	while (not WindowShouldClose())
 	{
@@ -857,6 +857,65 @@ int	main(int argc, char* argv[])
 				isEditorFocused = true;
 		}
 
+		// Trata do atalho Super/Windows + Seta para ajuste da janela (Window tiling)
+		bool isSuperPressed = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
+		if (isSuperPressed)
+		{
+			int monitor = GetCurrentMonitor();
+			int monitorW = GetMonitorWidth(monitor);
+			int monitorH = GetMonitorHeight(monitor);
+
+			if (IsKeyPressed(KEY_LEFT))
+			{
+				if (!isMaximized)
+				{
+					prevWidth = GetScreenWidth();
+					prevHeight = GetScreenHeight();
+					prevPos = GetWindowPosition();
+				}
+				SetWindowSize(monitorW / 2, monitorH);
+				SetWindowPosition(0, 0);
+				isMaximized = false;
+			}
+			else if (IsKeyPressed(KEY_RIGHT))
+			{
+				if (!isMaximized)
+				{
+					prevWidth = GetScreenWidth();
+					prevHeight = GetScreenHeight();
+					prevPos = GetWindowPosition();
+				}
+				SetWindowSize(monitorW / 2, monitorH);
+				SetWindowPosition(monitorW / 2, 0);
+				isMaximized = false;
+			}
+			else if (IsKeyPressed(KEY_UP))
+			{
+				if (!isMaximized)
+				{
+					prevWidth = GetScreenWidth();
+					prevHeight = GetScreenHeight();
+					prevPos = GetWindowPosition();
+				}
+				SetWindowSize(monitorW, monitorH);
+				SetWindowPosition(0, 0);
+				isMaximized = true;
+			}
+			else if (IsKeyPressed(KEY_DOWN))
+			{
+				if (isMaximized || GetScreenWidth() != prevWidth || GetScreenHeight() != prevHeight)
+				{
+					SetWindowSize(prevWidth, prevHeight);
+					SetWindowPosition(static_cast<int>(prevPos.x), static_cast<int>(prevPos.y));
+					isMaximized = false;
+				}
+				else
+				{
+					MinimizeWindow();
+				}
+			}
+		}
+
 		triggerKeyRepeat = false;
 		if (!autocompleteActive && (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_BACKSPACE) || IsKeyDown(KEY_DELETE) || IsKeyDown(KEY_ENTER) || IsKeyDown(KEY_TAB)))
 		{
@@ -897,14 +956,31 @@ int	main(int argc, char* argv[])
 			int c = GetCharPressed();
 			while (c > 0)
 			{
-				if (c >= 32 && c <= 255)
+				if (c >= 32 && c <= 127)
+				{
 					aiInputPrompt.push_back(static_cast<char>(c));
+				}
+				else if (c >= 128)
+				{
+					aiInputPrompt.push_back(static_cast<char>(0xC0 | (c >> 6)));
+					aiInputPrompt.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+				}
 				c = GetCharPressed();
 			}
 			if (IsKeyPressed(KEY_BACKSPACE) || (activeRepeatKey == KEY_BACKSPACE && triggerKeyRepeat))
 			{
 				if (!aiInputPrompt.empty())
-					aiInputPrompt.pop_back();
+				{
+					size_t eraseLen = 1;
+					if (aiInputPrompt.length() >= 2)
+					{
+						unsigned char c1 = static_cast<unsigned char>(aiInputPrompt[aiInputPrompt.length() - 2]);
+						unsigned char c2 = static_cast<unsigned char>(aiInputPrompt[aiInputPrompt.length() - 1]);
+						if (c1 >= 0xC0 && c1 <= 0xDF && c2 >= 0x80 && c2 <= 0xBF)
+							eraseLen = 2;
+					}
+					aiInputPrompt.erase(aiInputPrompt.length() - eraseLen, eraseLen);
+				}
 			}
 			if (IsKeyPressed(KEY_ENTER))
 			{
@@ -1549,7 +1625,7 @@ int	main(int argc, char* argv[])
 					{
 						std::lock_guard<std::mutex>	lock(chatMutex);
 						chatHistory.clear();
-						chatHistory.push_back(ChatMessage{"assistant", "Histórico de conversação limpo. Como posso ajudar?"});
+						chatHistory.push_back(ChatMessage{"assistant", "Histórico de conversação limpo. Como te posso ajudar?"});
 					}
 				}
 
@@ -1944,9 +2020,9 @@ int	main(int argc, char* argv[])
 			// Draw AI Header/Title Bar
 			DrawRectangleRounded(Rectangle{floatX + 1.0f, floatY + 1.0f, floatW - 2.0f, 35.0f}, 0.05f, 4, GetColor(0x1a1a26ff));
 			if (isCustomFontLoaded)
-				DrawTextEx(textFont, "AI Assistant (F2)", makeVector2(floatX + 15.0f, floatY + 8.0f), 15.0f, fontSpacing, config.textColor);
+				DrawTextEx(textFont, "Assistente de IA (F2)", makeVector2(floatX + 15.0f, floatY + 8.0f), 15.0f, fontSpacing, config.textColor);
 			else
-				DrawText("AI Assistant (F2)", floatX + 15, floatY + 8, 15, config.textColor);
+				DrawText("Assistente de IA (F2)", floatX + 15, floatY + 8, 15, config.textColor);
 
 			// Draw Chat Messages Logs
 			float chatY = floatY + 45.0f - aiScrollY;
@@ -1957,7 +2033,7 @@ int	main(int argc, char* argv[])
 				for (const auto& msg : chatHistory)
 				{
 					Color roleColor = msg.role == "user" ? PINK : SKYBLUE;
-					t_text roleLabel = msg.role == "user" ? "USER:" : "ASSISTANT:";
+					t_text roleLabel = msg.role == "user" ? "UTILIZADOR:" : "ASSISTENTE:";
 					
 					if (chatY + 20.0f >= floatY + 40.0f && chatY <= floatY + floatH - 170.0f)
 					{
@@ -1991,7 +2067,7 @@ int	main(int argc, char* argv[])
 			// Draw F3 Speak Voice Button
 			Color voiceBtnColor = isRecording ? RED : GetColor(0x2a2a3eff);
 			DrawRectangleRounded(Rectangle{floatX + 10.0f, floatY + floatH - 120.0f, 170.0f, 25.0f}, 0.2f, 4, voiceBtnColor);
-			t_text voiceBtnTxt = isRecording ? "[ STOP REC ]" : "F3 / Speak Voice";
+			t_text voiceBtnTxt = isRecording ? "[ PARAR GRAVAÇÃO ]" : "F3 / Falar por Voz";
 			if (isCustomFontLoaded)
 				DrawTextEx(textFont, voiceBtnTxt.c_str(), makeVector2(floatX + 22.0f, floatY + floatH - 114.0f), 12.0f, fontSpacing, WHITE);
 			else
@@ -1999,7 +2075,7 @@ int	main(int argc, char* argv[])
 
 			// Draw Code Analyze Button
 			DrawRectangleRounded(Rectangle{floatX + 210.0f, floatY + floatH - 120.0f, 180.0f, 25.0f}, 0.2f, 4, GetColor(0x2a2a3eff));
-			t_text analyzeTxt = selectionActive ? "Analyze Selected" : "Explain File";
+			t_text analyzeTxt = selectionActive ? "Analisar Selecção" : "Explicar Ficheiro";
 			if (isCustomFontLoaded)
 				DrawTextEx(textFont, analyzeTxt.c_str(), makeVector2(floatX + 222.0f, floatY + floatH - 114.0f), 12.0f, fontSpacing, WHITE);
 			else
@@ -2012,13 +2088,13 @@ int	main(int argc, char* argv[])
 
 			t_text placeholder = "";
 			if (isAiThinking)
-				placeholder = "[ AI is thinking... ]";
+				placeholder = "[ A IA está a pensar... ]";
 			else if (isAudioTranscribing)
-				placeholder = "[ Transcribing voice... ]";
+				placeholder = "[ A transcrever voz... ]";
 			else if (isRecording)
-				placeholder = "[ Recording micro... ]";
+				placeholder = "[ A gravar microfone... ]";
 			else if (aiInputPrompt.empty())
-				placeholder = "Pergunte ao Assistente (Enter)...";
+				placeholder = "Pergunta ao Assistente (Enter)...";
 			else
 				placeholder = aiInputPrompt;
 
@@ -2031,9 +2107,9 @@ int	main(int argc, char* argv[])
 			// Clear Chat History Button
 			DrawRectangleRounded(Rectangle{floatX + 10.0f, floatY + floatH - 40.0f, 140.0f, 25.0f}, 0.2f, 4, GetColor(0x221a2aff));
 			if (isCustomFontLoaded)
-				DrawTextEx(textFont, "Clear Chat History", makeVector2(floatX + 18.0f, floatY + floatH - 34.0f), 11.0f, fontSpacing, PINK);
+				DrawTextEx(textFont, "Limpar Histórico", makeVector2(floatX + 18.0f, floatY + floatH - 34.0f), 11.0f, fontSpacing, PINK);
 			else
-				DrawText("Clear Chat History", floatX + 18, floatY + floatH - 34, 11, PINK);
+				DrawText("Limpar Histórico", floatX + 18, floatY + floatH - 34, 11, PINK);
 		}
 
 		if (dialogState != STATE_NONE)
