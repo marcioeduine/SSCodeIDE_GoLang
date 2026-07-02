@@ -1,6 +1,6 @@
 # SSCodeIDE Configuration File
-font = FiraCode-Regular.ttf
-font_bold = FiraCode-Bold.ttf
+font = font/FiraCode-Regular.ttf
+font_bold = font/FiraCode-Bold.ttf
 font_size = 24
 font_spacing = 1.0
 vertical_stride = 24
