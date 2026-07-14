@@ -1,6 +1,6 @@
-# SSCodeIDE
+# SS - Code IDE (Integrated Development Environment)
 
-An ultra-lightweight, terminal-based Integrated Development Environment (IDE) built from scratch using pure C++98 and POSIX standard APIs. Featuring manual memory management, explicit logical operator mappings (`and`, `or`, `not`), strict UTF-8 text synchronization, single-click efficiency philosophies, and an embedded local asynchronous Artificial Intelligence command bridge.
+An ultra-lightweight, modal terminal-based Integrated Development Environment (IDE) built from the ground up using pure C++98 and POSIX standard APIs, featuring an embedded local asynchronous AI command bridge.
 
 ---
 
