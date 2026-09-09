@@ -755,7 +755,6 @@ void RefreshScreen(void)
     if (current_mode == MODE_AI_PROMPT) {
         // Floating centered box like LazyVim
         int box_width = 60;
-        int box_height = 3;
         int start_y = screen_rows / 2 - 1;
         if (start_y < 1) start_y = 1;
         int start_x = (screen_cols - box_width) / 2;
