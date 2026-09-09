@@ -7,10 +7,14 @@
 ## Key Features
 
 - **100% Native Go & Bubbletea**: Built on the Elm architecture for terminal UIs.
+- **Real-Time Editor Syntax Highlighting**: Real-time keyword, string, comment, type, and preprocessor color highlighting for C, C++, Go, Python, JavaScript, TypeScript, Shell, HTML, CSS, etc.
+- **Common IDE Editing Shortcuts**: Full support for `Ctrl+C` (copy line/selection), `Ctrl+V` (paste), `Ctrl+X` (cut), `Ctrl+D` (duplicate line), `Ctrl+Backspace`/`Alt+Backspace` (delete word left), `Ctrl+Delete`/`Alt+Delete` (delete word right), `Ctrl+Left`/`Alt+Left` (word left), `Ctrl+Right`/`Alt+Right` (word right).
+- **Threaded Syntax Autocomplete**: Non-blocking asynchronous command palette and chat suggestions powered by background goroutines (`tea.Cmd`).
+- **Floating SSHeader Git User Modal**: Interactive floating dialog window (`F5`, `Ctrl+G`, `:user`, `:config`, `:ssheader`) to configure `git config user.name` and `git config user.email` directly inside the IDE.
+- **Interactive Workspace Directory Browser**: Type `:workspace`, `:cd`, or `:folder` in Command Palette (`Ctrl+P`) to open an interactive modal directory picker.
 - **Direct Editor Tab Switching**: Switch tabs instantly using `Alt+1..9`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, or `Ctrl+N`.
-- **F4 Automated File Header Generator**: Instantly insert or update standard author header blocks customized per file extension (`.go`, `.py`, `.c`, `.cpp`, `.cs`, `.js`, `.ts`, `.sh`, `.html`, etc.).
+- **F4 Automated File Header Generator**: Instantly insert or update standard 42/SSHeader file headers. Formatted to strict 80-character line bounds.
 - **VS Code Style Git Source Control Panel**: Press `Ctrl+4` or `Ctrl+Shift+G` to view repository status (` branch`), stage/unstage files (`Space`), write commit messages (`Ctrl+Enter`), push (`P`), and pull (`U`).
-- **Command Palette Workspace Management**: Press `Ctrl+P` and type `:workspace <path>` or `:cd <path>` to open and load entire directory workspaces.
 - **Universal Portability**: Zero hardcoded local environment paths; builds seamlessly across Linux, macOS, and WSL.
 - **Local Ollama AI Integration**: Connect to local coding models (`deepseek-coder`, `qwen2.5-coder`, `llama3.2`, etc.) via `OLLAMA_HOST` or default localhost.
 

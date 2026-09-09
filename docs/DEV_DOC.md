@@ -44,8 +44,8 @@ All source files are located inside the `src/` directory to maintain a clean pro
 | File | Responsibility |
 | :--- | :--- |
 | `src/main.go` | Entry point. Initialises `tea.Program` with alternate screen buffer and mouse motion tracking. |
-| `src/model.go` | State structures (`mainModel`, `EditorTab`, `FileItem`, `ChatMessage`, `GitStatusItem`), event loop handling (`Update`), Git Source Control logic, F4 header generator, keyboard/mouse event dispatching, and layout assembly (`View`). |
-| `src/ui.go` | Style tokens (Catppuccin Mocha theme, Git status styles), panel box renderer (`renderPanel`), tab bar renderer (`renderTabBar`), text truncation (`truncateString`), and raw word wrapping (`wrapRawText`). |
+| `src/model.go` | State structures (`mainModel`, `EditorTab`, `FileItem`, `ChatMessage`, `GitStatusItem`, `WsModalItem`), event loop handling (`Update`), Git Source Control logic, F4 header generator, IDE text manipulation shortcuts (`Ctrl+C/V/X/D`, word movement/deletion), background thread autocomplete (`fetchAutocompletionsCmd`), and layout assembly (`View`). |
+| `src/ui.go` | Style tokens (Catppuccin Mocha theme), syntax highlighter lexer (`highlightCodeLine`), panel box renderer (`renderPanel`), tab bar renderer (`renderTabBar`), autocomplete popup renderer (`renderSuggestPopup`), workspace modal renderer (`renderWorkspaceModal`), and Git user config modal renderer (`renderGitUserModal`). |
 | `src/ai.go` | Asynchronous Ollama HTTP API client integration (`/api/tags`, `/api/generate`, `/api/pull`) with dynamic `OLLAMA_HOST` resolution and async shell execution. |
 | `src/icons.go` | File type and directory Nerd Font icon mapping. |
 
@@ -53,17 +53,24 @@ All source files are located inside the `src/` directory to maintain a clean pro
 
 ## Component Systems
 
-1. **Git Source Control Subsystem**:
-   - Executes `git status --porcelain` asynchronously to build `gitItems`.
+1. **Syntax Highlighting Engine**:
+   - `highlightCodeLine()` parses line tokens (keywords, types, strings, comments, numbers, preprocessors) and applies Lipgloss color styles in real-time.
+
+2. **Threaded Autocomplete Engine**:
+   - `fetchAutocompletionsCmd()` runs completion queries asynchronously in background goroutines (`tea.Cmd`).
+   - Renders floating autocomplete popups beneath Command Palette (`Ctrl+P`) and Chat (`Ctrl+3`) without blocking UI updates.
+
+3. **SSHeader & Git Identity Modal**:
+   - `openGitUserModal()` opens a floating configuration window (`F5`, `Ctrl+G`, `:user`, `:config`).
+   - Saves settings to `.gitconfig` (`git config user.name` / `user.email`).
+   - `generateHeader()` formats line bounds using `padOrTruncateRune()` to ensure exact 80-character header box width.
+
+4. **Git Source Control Subsystem**:
+   - Executes `git status --porcelain` and `git branch --show-current` asynchronously.
    - Supports staging (`git add`), unstaging (`git restore --staged`), committing (`git commit`), pushing (`git push`), and pulling (`git pull`).
 
-2. **Automated Header Generator (`F4`)**:
-   - `generateHeader()` constructs language-specific header comments (`.go`, `.py`, `.c`, `.cpp`, `.cs`, `.js`, `.ts`, `.sh`, `.html`, etc.).
-   - `insertOrUpdateHeader()` updates the `Updated:` timestamp if a header already exists, or prepends a new header to `tab.Lines`.
-
-3. **Workspace Management**:
-   - `executePaletteCommand()` handles workspace switching (`:workspace <path>`, `:cd <path>`).
-   - Changes current working directory with `os.Chdir()`, reloads tree via `loadDirectory()`, and updates Git status.
+5. **Interactive Workspace Picker**:
+   - `openWorkspaceModal()` opens a interactive directory browser for selecting workspace folders.
 
 ---
 

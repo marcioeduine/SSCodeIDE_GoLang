@@ -6,9 +6,10 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 
 ## Key Features
 
-- **File Explorer**: Interactive tree navigation with folder expansion and file icon indicators.
-- **Multi-Tab Editor**: Edit multiple files simultaneously with line numbers, status indicators, and keyboard navigation.
-- **Direct Tab Switching**: Press `Alt+1..9`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, or `Ctrl+N` to jump directly between active editor tabs.
+- **Real-Time Editor Syntax Highlighting**: Automatic keyword, type, string, comment, number, and preprocessor directive highlighting for C, C++, Go, Python, JavaScript, TypeScript, Shell, HTML, CSS, JSON, Markdown, etc.
+- **Common IDE Shortcuts & Text Manipulation**: Full support for `Ctrl+C` (copy line/selection), `Ctrl+V` (paste), `Ctrl+X` (cut line/selection), `Ctrl+D` (duplicate line), `Ctrl+Backspace`/`Alt+Backspace` (delete word left), `Ctrl+Delete`/`Alt+Delete` (delete word right), `Ctrl+Left`/`Alt+Left` (jump word left), `Ctrl+Right`/`Alt+Right` (jump word right).
+- **Threaded Syntax Autocomplete**: Non-blocking asynchronous command palette and chat autocomplete running in background threads (`tea.Cmd`). Shows floating syntax candidate popups without slowing down TUI rendering.
+- **SSHeader Git User Configuration Modal**: Floating dialog window (`F5`, `Ctrl+G`, `:user`, `:config`, `:ssheader`) to configure `git config user.name` and `git config user.email` directly from the IDE. Updates author credentials used by `F4` header generator.
 - **Dynamic Git Branch Status**: View the active Git branch (` main`, ` feature/...`) in real-time on the status bar.
 - **Automated F4 Header Generator**: Press `F4` to insert or update standard 42/SSHeader file headers. Automatically retrieves author name and email from `git config user.name` and `git config user.email`, and formats lines to fit strictly within the exact character length boundary of the header delimiter.
 - **Interactive Workspace Directory Picker**: Type `:workspace`, `:cd`, or `:folder` in the Command Palette (`Ctrl+P`) to open an interactive modal directory browser. List all system directories and navigate seamlessly (`..`, subfolders, `Space`/`Enter` to select workspace).
@@ -31,6 +32,15 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 | `Ctrl+Tab` / `Ctrl+N` | Switch to Next Editor Tab |
 | `Ctrl+Shift+Tab` | Switch to Previous Editor Tab |
 | `F4` | Insert or update Git-configured author file header |
+| `F5` or `Ctrl+G` | Open SSHeader Git User Configuration modal |
+| `Ctrl+C` | Copy line or selection to clipboard (in Editor) |
+| `Ctrl+X` | Cut line or selection to clipboard (in Editor) |
+| `Ctrl+V` | Paste clipboard content (in Editor) |
+| `Ctrl+D` | Duplicate active line (in Editor) |
+| `Ctrl+Backspace` / `Alt+Backspace` | Delete previous word (in Editor) |
+| `Ctrl+Delete` / `Alt+Delete` | Delete next word (in Editor) |
+| `Ctrl+Left` / `Alt+Left` | Move cursor word left (in Editor) |
+| `Ctrl+Right` / `Alt+Right` | Move cursor word right (in Editor) |
 | `Tab` | Cycle focus between Explorer, Editor, Chat, and Git Source Control |
 | `Ctrl+P` | Toggle Command Palette |
 | `Ctrl+B` | Toggle Explorer sidebar visibility |
@@ -39,7 +49,6 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 | `Ctrl+K` | Open Ollama Model Manager modal |
 | `Ctrl+Left` / `Ctrl+Right` | Adjust Explorer width ratio |
 | `Alt+Left` / `Alt+Right` | Adjust Chat width ratio |
-| `Ctrl+C` | Quit SSCode IDE |
 
 ---
 
@@ -60,6 +69,7 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 
 You can execute commands in the Command Palette (`Ctrl+P`) or directly in the Chat input box:
 
+- `:user` or `:config` or `:ssheader` — Open floating SSHeader Git User configuration modal.
 - `:workspace` or `:cd` or `:folder` — Open interactive modal directory picker to choose a workspace.
 - `:workspace <path>` or `:cd <path>` — Open modal browser starting at specified directory path.
 - `:git` or `:status` — Focus Git Source Control panel.

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -103,7 +104,158 @@ type mainModel struct {
 	gitSel         int
 	gitScrollTop   int
 
+	// SSHeader Git User Config Modal
+	showGitUserModal  bool
+	gitUserNameInput  textinput.Model
+	gitUserEmailInput textinput.Model
+	gitUserFocus      int
+
+	// Threaded Autocomplete Popup
+	showSuggestPopup bool
+	suggestItems     []string
+	suggestSel       int
+	suggestTarget    string
+
 	statusMsg string
+}
+
+var internalClipboard string
+
+func getClipboard() string {
+	if out, err := exec.Command("xclip", "-selection", "clipboard", "-o").Output(); err == nil && len(out) > 0 {
+		return string(out)
+	}
+	if out, err := exec.Command("wl-paste", "-n").Output(); err == nil && len(out) > 0 {
+		return string(out)
+	}
+	if out, err := exec.Command("xsel", "-b", "-o").Output(); err == nil && len(out) > 0 {
+		return string(out)
+	}
+	return internalClipboard
+}
+
+func setClipboard(text string) {
+	internalClipboard = text
+	cmd := exec.Command("xclip", "-selection", "clipboard")
+	cmd.Stdin = strings.NewReader(text)
+	if err := cmd.Run(); err == nil {
+		return
+	}
+	cmdWl := exec.Command("wl-copy")
+	cmdWl.Stdin = strings.NewReader(text)
+	if err := cmdWl.Run(); err == nil {
+		return
+	}
+	cmdXsel := exec.Command("xsel", "-b", "-i")
+	cmdXsel.Stdin = strings.NewReader(text)
+	_ = cmdXsel.Run()
+}
+
+func findWordLeft(line string, col int) int {
+	runes := []rune(line)
+	if col <= 0 || len(runes) == 0 {
+		return 0
+	}
+	if col > len(runes) {
+		col = len(runes)
+	}
+	i := col - 1
+	for i > 0 && unicode.IsSpace(runes[i]) {
+		i--
+	}
+	for i > 0 && (unicode.IsLetter(runes[i-1]) || unicode.IsDigit(runes[i-1]) || runes[i-1] == '_') {
+		i--
+	}
+	return i
+}
+
+func findWordRight(line string, col int) int {
+	runes := []rune(line)
+	n := len(runes)
+	if col >= n {
+		return n
+	}
+	i := col
+	for i < n && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
+		i++
+	}
+	for i < n && unicode.IsSpace(runes[i]) {
+		i++
+	}
+	return i
+}
+
+type autocompleteMsg struct {
+	items  []string
+	query  string
+	target string
+}
+
+func fetchAutocompletionsCmd(query string, target string, workspacePath string) tea.Cmd {
+	return func() tea.Msg {
+		q := strings.TrimSpace(query)
+		var candidates []string
+
+		if target == "cmd" || target == "chat" {
+			if strings.HasPrefix(q, ":") || target == "cmd" {
+				cleanQ := strings.TrimPrefix(q, ":")
+				allCmds := []string{
+					":workspace", ":cd", ":folder", ":user", ":config", ":ssheader",
+					":models", ":theme catppuccin", ":theme dracula", ":theme nord",
+					":open", ":w", ":save", ":q", ":quit", ":git", ":status",
+				}
+				for _, c := range allCmds {
+					if strings.HasPrefix(strings.TrimPrefix(c, ":"), cleanQ) || strings.Contains(c, cleanQ) {
+						candidates = append(candidates, c)
+					}
+				}
+				if strings.HasPrefix(cleanQ, "open ") || strings.HasPrefix(cleanQ, "workspace ") || strings.HasPrefix(cleanQ, "cd ") {
+					parts := strings.SplitN(cleanQ, " ", 2)
+					prefixCmd := ":" + parts[0] + " "
+					subPath := ""
+					if len(parts) == 2 {
+						subPath = parts[1]
+					}
+					baseDir := workspacePath
+					if subPath != "" && filepath.IsAbs(subPath) {
+						baseDir = filepath.Dir(subPath)
+					}
+					if baseDir == "" {
+						baseDir = "."
+					}
+					entries, err := os.ReadDir(baseDir)
+					if err == nil {
+						for _, e := range entries {
+							if strings.HasPrefix(e.Name(), filepath.Base(subPath)) || subPath == "" {
+								candidates = append(candidates, prefixCmd+filepath.Join(baseDir, e.Name()))
+							}
+						}
+					}
+				}
+			} else if strings.HasPrefix(q, "/") {
+				slashCmds := []string{"/help", "/clear", "/models", "/open", "/save", "/quit"}
+				for _, c := range slashCmds {
+					if strings.HasPrefix(c, q) {
+						candidates = append(candidates, c)
+					}
+				}
+			}
+		}
+		return autocompleteMsg{items: candidates, query: query, target: target}
+	}
+}
+
+func (m *mainModel) openGitUserModal() {
+	name, email := getGitUser(m.workspacePath)
+	m.gitUserNameInput.SetValue(name)
+	m.gitUserEmailInput.SetValue(email)
+	m.gitUserNameInput.Focus()
+	m.gitUserEmailInput.Blur()
+	m.gitUserFocus = 0
+	m.showGitUserModal = true
+	m.showCmdPalette = false
+	m.showWorkspaceModal = false
+	m.showModal = false
 }
 
 func initialModel() mainModel {
@@ -124,18 +276,32 @@ func initialModel() mainModel {
 	gcInput.CharLimit = 100
 	gcInput.Width = 30
 
+	uNameInput := textinput.New()
+	uNameInput.Prompt = ""
+	uNameInput.Placeholder = "Full Name (git config user.name)"
+	uNameInput.CharLimit = 60
+	uNameInput.Width = 35
+
+	uEmailInput := textinput.New()
+	uEmailInput.Prompt = ""
+	uEmailInput.Placeholder = "Email Address (git config user.email)"
+	uEmailInput.CharLimit = 60
+	uEmailInput.Width = 35
+
 	m := mainModel{
-		focus:           FocusExplorer,
-		sidebarOpen:     true,
-		expRatio:        0.25,
-		chatRatio:       0.25,
-		chatInput:       ti,
-		cmdPaletteInput: cmdInput,
-		gitCommitInput:  gcInput,
-		chatHistory:     make([]ChatMessage, 0),
-		tabs:            make([]EditorTab, 0),
-		activeTab:       -1,
-		currentModel:    "deepseek-coder:1.3b",
+		focus:             FocusExplorer,
+		sidebarOpen:       true,
+		expRatio:          0.25,
+		chatRatio:         0.25,
+		chatInput:         ti,
+		cmdPaletteInput:   cmdInput,
+		gitCommitInput:    gcInput,
+		gitUserNameInput:  uNameInput,
+		gitUserEmailInput: uEmailInput,
+		chatHistory:       make([]ChatMessage, 0),
+		tabs:              make([]EditorTab, 0),
+		activeTab:         -1,
+		currentModel:      "deepseek-coder:1.3b",
 	}
 
 	m.chatHistory = append(m.chatHistory, ChatMessage{
@@ -703,8 +869,82 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 
-		if key == "ctrl+c" {
+		if m.showGitUserModal {
+			switch key {
+			case "esc", "q":
+				m.showGitUserModal = false
+			case "tab", "up", "down":
+				m.gitUserFocus = (m.gitUserFocus + 1) % 2
+				if m.gitUserFocus == 0 {
+					m.gitUserNameInput.Focus()
+					m.gitUserEmailInput.Blur()
+				} else {
+					m.gitUserEmailInput.Focus()
+					m.gitUserNameInput.Blur()
+				}
+			case "enter":
+				name := strings.TrimSpace(m.gitUserNameInput.Value())
+				email := strings.TrimSpace(m.gitUserEmailInput.Value())
+				cmdN := exec.Command("git", "config", "user.name", name)
+				if m.workspacePath != "" {
+					cmdN.Dir = m.workspacePath
+				}
+				_ = cmdN.Run()
+				cmdE := exec.Command("git", "config", "user.email", email)
+				if m.workspacePath != "" {
+					cmdE.Dir = m.workspacePath
+				}
+				_ = cmdE.Run()
+				m.showGitUserModal = false
+				m.statusMsg = fmt.Sprintf("Git user updated: %s <%s>", name, email)
+			default:
+				var cmd tea.Cmd
+				if m.gitUserFocus == 0 {
+					m.gitUserNameInput, cmd = m.gitUserNameInput.Update(msg)
+				} else {
+					m.gitUserEmailInput, cmd = m.gitUserEmailInput.Update(msg)
+				}
+				return m, cmd
+			}
+			return m, nil
+		}
+
+		if m.showSuggestPopup {
+			switch key {
+			case "up":
+				if m.suggestSel > 0 {
+					m.suggestSel--
+				}
+				return m, nil
+			case "down":
+				if m.suggestSel < len(m.suggestItems)-1 {
+					m.suggestSel++
+				}
+				return m, nil
+			case "tab", "enter":
+				if len(m.suggestItems) > 0 && m.suggestSel < len(m.suggestItems) {
+					chosen := m.suggestItems[m.suggestSel]
+					if m.suggestTarget == "cmd" {
+						m.cmdPaletteInput.SetValue(chosen)
+					} else if m.suggestTarget == "chat" {
+						m.chatInput.SetValue(chosen)
+					}
+					m.showSuggestPopup = false
+					return m, nil
+				}
+			case "esc":
+				m.showSuggestPopup = false
+				return m, nil
+			}
+		}
+
+		if key == "ctrl+c" && m.focus != FocusEditor {
 			return m, tea.Quit
+		}
+
+		if key == "f5" || key == "ctrl+g" {
+			m.openGitUserModal()
+			return m, nil
 		}
 
 		if key == "f4" {
@@ -1063,13 +1303,115 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							tab.CursorCol = len(tab.Lines[tab.CursorLine])
 						}
 					}
-				case "left":
-					if tab.CursorCol > 0 {
-						tab.CursorCol--
+				case "ctrl+c":
+					if tab.CursorLine < len(tab.Lines) {
+						setClipboard(tab.Lines[tab.CursorLine])
+						m.statusMsg = "Copied line to clipboard"
 					}
-				case "right":
-					if tab.CursorLine < len(tab.Lines) && tab.CursorCol < len(tab.Lines[tab.CursorLine]) {
-						tab.CursorCol++
+				case "ctrl+x":
+					if tab.CursorLine < len(tab.Lines) {
+						setClipboard(tab.Lines[tab.CursorLine])
+						tab.Lines = append(tab.Lines[:tab.CursorLine], tab.Lines[tab.CursorLine+1:]...)
+						if len(tab.Lines) == 0 {
+							tab.Lines = []string{""}
+						}
+						if tab.CursorLine >= len(tab.Lines) {
+							tab.CursorLine = len(tab.Lines) - 1
+						}
+						tab.CursorCol = 0
+						tab.IsModified = true
+						m.statusMsg = "Cut line to clipboard"
+					}
+				case "ctrl+v":
+					clipText := getClipboard()
+					if clipText != "" && tab.CursorLine < len(tab.Lines) {
+						clipLines := strings.Split(clipText, "\n")
+						curLine := tab.Lines[tab.CursorLine]
+						if tab.CursorCol > len(curLine) {
+							tab.CursorCol = len(curLine)
+						}
+						if len(clipLines) == 1 {
+							tab.Lines[tab.CursorLine] = curLine[:tab.CursorCol] + clipLines[0] + curLine[tab.CursorCol:]
+							tab.CursorCol += len(clipLines[0])
+						} else {
+							left := curLine[:tab.CursorCol]
+							right := curLine[tab.CursorCol:]
+							newLines := make([]string, 0, len(tab.Lines)+len(clipLines)-1)
+							newLines = append(newLines, tab.Lines[:tab.CursorLine]...)
+							newLines = append(newLines, left+clipLines[0])
+							for i := 1; i < len(clipLines)-1; i++ {
+								newLines = append(newLines, clipLines[i])
+							}
+							newLines = append(newLines, clipLines[len(clipLines)-1]+right)
+							newLines = append(newLines, tab.Lines[tab.CursorLine+1:]...)
+							tab.Lines = newLines
+							tab.CursorLine += len(clipLines) - 1
+							tab.CursorCol = len(clipLines[len(clipLines)-1])
+						}
+						tab.IsModified = true
+						m.statusMsg = "Pasted from clipboard"
+					}
+				case "ctrl+d":
+					if tab.CursorLine < len(tab.Lines) {
+						curLine := tab.Lines[tab.CursorLine]
+						newLines := make([]string, 0, len(tab.Lines)+1)
+						newLines = append(newLines, tab.Lines[:tab.CursorLine+1]...)
+						newLines = append(newLines, curLine)
+						newLines = append(newLines, tab.Lines[tab.CursorLine+1:]...)
+						tab.Lines = newLines
+						tab.CursorLine++
+						tab.IsModified = true
+						m.statusMsg = "Duplicated line"
+					}
+				case "ctrl+backspace", "alt+backspace":
+					if tab.CursorLine < len(tab.Lines) {
+						curLine := tab.Lines[tab.CursorLine]
+						if tab.CursorCol > 0 {
+							targetCol := findWordLeft(curLine, tab.CursorCol)
+							tab.Lines[tab.CursorLine] = curLine[:targetCol] + curLine[tab.CursorCol:]
+							tab.CursorCol = targetCol
+							tab.IsModified = true
+						} else if tab.CursorLine > 0 {
+							prevLen := len(tab.Lines[tab.CursorLine-1])
+							tab.Lines[tab.CursorLine-1] += tab.Lines[tab.CursorLine]
+							tab.Lines = append(tab.Lines[:tab.CursorLine], tab.Lines[tab.CursorLine+1:]...)
+							tab.CursorLine--
+							tab.CursorCol = prevLen
+							tab.IsModified = true
+						}
+					}
+				case "ctrl+delete", "alt+delete":
+					if tab.CursorLine < len(tab.Lines) {
+						curLine := tab.Lines[tab.CursorLine]
+						if tab.CursorCol < len(curLine) {
+							targetCol := findWordRight(curLine, tab.CursorCol)
+							tab.Lines[tab.CursorLine] = curLine[:tab.CursorCol] + curLine[targetCol:]
+							tab.IsModified = true
+						} else if tab.CursorLine < len(tab.Lines)-1 {
+							tab.Lines[tab.CursorLine] += tab.Lines[tab.CursorLine+1]
+							tab.Lines = append(tab.Lines[:tab.CursorLine+1], tab.Lines[tab.CursorLine+2:]...)
+							tab.IsModified = true
+						}
+					}
+				case "ctrl+left", "alt+left":
+					if tab.CursorLine < len(tab.Lines) {
+						curLine := tab.Lines[tab.CursorLine]
+						if tab.CursorCol > 0 {
+							tab.CursorCol = findWordLeft(curLine, tab.CursorCol)
+						} else if tab.CursorLine > 0 {
+							tab.CursorLine--
+							tab.CursorCol = len(tab.Lines[tab.CursorLine])
+						}
+					}
+				case "ctrl+right", "alt+right":
+					if tab.CursorLine < len(tab.Lines) {
+						curLine := tab.Lines[tab.CursorLine]
+						if tab.CursorCol < len(curLine) {
+							tab.CursorCol = findWordRight(curLine, tab.CursorCol)
+						} else if tab.CursorLine < len(tab.Lines)-1 {
+							tab.CursorLine++
+							tab.CursorCol = 0
+						}
 					}
 				case "enter":
 					curLine := tab.Lines[tab.CursorLine]
@@ -1182,6 +1524,18 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 
+	case autocompleteMsg:
+		if len(msg.items) > 0 {
+			m.suggestItems = msg.items
+			m.suggestTarget = msg.target
+			m.showSuggestPopup = true
+			if m.suggestSel >= len(m.suggestItems) {
+				m.suggestSel = 0
+			}
+		} else {
+			m.showSuggestPopup = false
+		}
+
 	case shellResultMsg:
 		m.chatHistory = append(m.chatHistory, ChatMessage{
 			Sender: "SYSTEM",
@@ -1194,6 +1548,11 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *mainModel) executePaletteCommand(cmdStr string, cmds *[]tea.Cmd) bool {
 	cmdStr = strings.TrimPrefix(cmdStr, ":")
+
+	if cmdStr == "user" || cmdStr == "config" || cmdStr == "ssheader" {
+		m.openGitUserModal()
+		return false
+	}
 
 	if cmdStr == "models" || cmdStr == "SSBotModels" {
 		m.showModal = true
@@ -1516,18 +1875,22 @@ func (m mainModel) View() string {
 			}
 
 			var lineContent string
+			ext := ""
+			if tab != nil {
+				ext = filepath.Ext(tab.Path)
+			}
 			if i == tab.CursorLine && m.focus == FocusEditor {
 				if tab.CursorCol < len(runesL) {
-					left := string(runesL[:tab.CursorCol])
-					mid := string(runesL[tab.CursorCol])
-					right := string(runesL[tab.CursorCol+1:])
-					lineContent = left + lipgloss.NewStyle().Reverse(true).Render(mid) + right
+					left := highlightCodeLine(string(runesL[:tab.CursorCol]), ext)
+					mid := lipgloss.NewStyle().Reverse(true).Render(string(runesL[tab.CursorCol]))
+					right := highlightCodeLine(string(runesL[tab.CursorCol+1:]), ext)
+					lineContent = left + mid + right
 				} else {
-					lineContent = string(runesL) + lipgloss.NewStyle().Reverse(true).Render(" ")
+					lineContent = highlightCodeLine(string(runesL), ext) + lipgloss.NewStyle().Reverse(true).Render(" ")
 				}
 				edtSb.WriteString(lipgloss.NewStyle().Foreground(mdPurple).Render(lineNum) + lineContent + "\n")
 			} else {
-				lineContent = string(runesL)
+				lineContent = highlightCodeLine(string(runesL), ext)
 				edtSb.WriteString(lipgloss.NewStyle().Foreground(mdTextMuted).Render(lineNum) + lineContent + "\n")
 			}
 		}
@@ -1673,12 +2036,20 @@ func (m mainModel) View() string {
 	bar := barLeft + statusBody.Render(barText)
 	finalView := lipgloss.JoinVertical(lipgloss.Left, mainView, bar)
 
+	if m.showGitUserModal {
+		return renderGitUserModal(m.gitUserNameInput.View(), m.gitUserEmailInput.View(), m.gitUserFocus, m.width, m.height)
+	}
+
 	if m.showWorkspaceModal {
 		return renderWorkspaceModal(m.wsModalPath, m.wsModalItems, m.wsModalSel, m.width, m.height)
 	}
 
 	if m.showCmdPalette {
-		return renderCmdPalette(m.cmdPaletteInput.View(), m.width, m.height)
+		cView := m.cmdPaletteInput.View()
+		if m.showSuggestPopup {
+			cView += "\n" + renderSuggestPopup(m.suggestItems, m.suggestSel, m.width)
+		}
+		return renderCmdPalette(cView, m.width, m.height)
 	}
 
 	if m.showModal {

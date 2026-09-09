@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -374,4 +375,173 @@ func renderWorkspaceModal(path string, items []WsModalItem, sel int, width, heig
 	content := modalBox.Render(sb.String())
 	return renderModalCentered(content, width, height)
 }
+
+var (
+	syntaxKwStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#BD93F9")).Bold(true)
+	syntaxTypeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#89B4FA")).Bold(true)
+	syntaxStringStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#A6E3A1"))
+	syntaxCommentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6C7086")).Italic(true)
+	syntaxNumStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#FAB387"))
+	syntaxPreStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#F38BA8")).Bold(true)
+
+	kwMap = map[string]bool{
+		"if": true, "else": true, "for": true, "while": true, "do": true, "switch": true,
+		"case": true, "break": true, "continue": true, "return": true, "goto": true,
+		"struct": true, "class": true, "public": true, "private": true, "protected": true,
+		"virtual": true, "override": true, "template": true, "typename": true, "namespace": true,
+		"using": true, "include": true, "import": true, "package": true, "func": true,
+		"var": true, "const": true, "type": true, "interface": true, "def": true,
+		"async": true, "await": true, "try": true, "catch": true, "except": true,
+		"finally": true, "raise": true, "throw": true, "new": true, "delete": true,
+		"enum": true, "fn": true, "let": true, "mut": true, "pub": true, "use": true,
+		"mod": true, "extern": true, "trait": true, "impl": true, "nil": true, "null": true,
+		"true": true, "false": true, "None": true, "self": true, "this": true,
+	}
+
+	typeMap = map[string]bool{
+		"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+		"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
+		"float": true, "float32": true, "float64": true, "double": true, "char": true,
+		"bool": true, "boolean": true, "string": true, "str": true, "byte": true,
+		"rune": true, "uintptr": true, "size_t": true, "ssize_t": true, "void": true,
+		"any": true, "auto": true,
+	}
+)
+
+func highlightCodeLine(line string, ext string) string {
+	ext = strings.ToLower(ext)
+	trimmed := strings.TrimSpace(line)
+
+	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "<!--") {
+		return syntaxCommentStyle.Render(line)
+	}
+
+	var sb strings.Builder
+	runes := []rune(line)
+	i := 0
+	n := len(runes)
+
+	for i < n {
+		r := runes[i]
+
+		if r == '"' || r == '\'' || r == '`' {
+			quote := r
+			start := i
+			i++
+			for i < n && (runes[i] != quote || runes[i-1] == '\\') {
+				i++
+			}
+			if i < n {
+				i++
+			}
+			sb.WriteString(syntaxStringStyle.Render(string(runes[start:i])))
+			continue
+		}
+
+		if (r == '#' || r == '@') && i+1 < n && (unicode.IsLetter(runes[i+1]) || runes[i+1] == '_') {
+			start := i
+			i++
+			for i < n && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
+				i++
+			}
+			sb.WriteString(syntaxPreStyle.Render(string(runes[start:i])))
+			continue
+		}
+
+		if r == '/' && i+1 < n && runes[i+1] == '/' {
+			sb.WriteString(syntaxCommentStyle.Render(string(runes[i:])))
+			break
+		}
+		if (ext == ".py" || ext == ".sh" || ext == ".bash" || ext == ".yml" || ext == ".toml") && r == '#' {
+			sb.WriteString(syntaxCommentStyle.Render(string(runes[i:])))
+			break
+		}
+
+		if unicode.IsLetter(r) || r == '_' {
+			start := i
+			for i < n && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
+				i++
+			}
+			word := string(runes[start:i])
+			if kwMap[word] {
+				sb.WriteString(syntaxKwStyle.Render(word))
+			} else if typeMap[word] {
+				sb.WriteString(syntaxTypeStyle.Render(word))
+			} else {
+				sb.WriteString(word)
+			}
+			continue
+		}
+
+		if unicode.IsDigit(r) {
+			start := i
+			for i < n && (unicode.IsDigit(runes[i]) || runes[i] == '.' || runes[i] == 'x' || runes[i] == 'X' || (runes[i] >= 'a' && runes[i] <= 'f') || (runes[i] >= 'A' && runes[i] <= 'F')) {
+				i++
+			}
+			sb.WriteString(syntaxNumStyle.Render(string(runes[start:i])))
+			continue
+		}
+
+		sb.WriteRune(r)
+		i++
+	}
+
+	return sb.String()
+}
+
+func renderSuggestPopup(items []string, sel int, width int) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	maxVis := 6
+	if len(items) < maxVis {
+		maxVis = len(items)
+	}
+
+	for i := 0; i < maxVis; i++ {
+		item := items[i]
+		if i == sel {
+			sb.WriteString(modalItemSelected.Render(" > "+item) + "\n")
+		} else {
+			sb.WriteString(modalItem.Render("   "+item) + "\n")
+		}
+	}
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(mdCyan).
+		Background(mdSurfaceDark).
+		Padding(0, 1)
+	return style.Render(strings.TrimRight(sb.String(), "\n"))
+}
+
+func renderGitUserModal(nameInput string, emailInput string, focusIdx int, width, height int) string {
+	var sb strings.Builder
+
+	title := modalTitle.Render("👤 SSHeader Git User Configuration")
+	sb.WriteString(title + "\n\n")
+
+	sb.WriteString(lipgloss.NewStyle().Foreground(mdTextMuted).Render("Configure identity used by F4 header generator and Git commits:") + "\n\n")
+
+	nameLabel := "  Name : "
+	if focusIdx == 0 {
+		nameLabel = " > Name : "
+	}
+	sb.WriteString(lipgloss.NewStyle().Foreground(mdPurple).Bold(focusIdx == 0).Render(nameLabel) + nameInput + "\n\n")
+
+	emailLabel := "  Email: "
+	if focusIdx == 1 {
+		emailLabel = " > Email: "
+	}
+	sb.WriteString(lipgloss.NewStyle().Foreground(mdCyan).Bold(focusIdx == 1).Render(emailLabel) + emailInput + "\n\n")
+
+	help := lipgloss.NewStyle().Foreground(mdTextMuted).Italic(true).Render(
+		"[Enter] Save to .gitconfig | [Tab/Up/Down] Switch Field | [Esc] Cancel",
+	)
+	sb.WriteString(help)
+
+	content := modalBox.Render(sb.String())
+	return renderModalCentered(content, width, height)
+}
+
 
