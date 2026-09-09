@@ -6,168 +6,109 @@
 /*    By: Ser Superior <marcioeduine@gmail.com>      +#++:++#++ +#++:++#++    */
 /*                                                         +#+        +#+     */
 /*    Created: 2026/07/02 10:37:56 by Ser Superior #+#    #+# #+#    #+#      */
-/*    Updated: 2026/07/02 10:37:57 by Ser Superior ########   ########        */
+/*    Updated: 2026/09/09 15:10:00 by Ser Superior ########   ########        */
 /*                                                                            */
 /* ************************************************************************** */
 
-#include <cstdlib>
 #include "sscode.hpp"
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include <cstdlib>
+#include <chrono>
+
+static bool	g_ncurses_initialized = false;
+
+static void	StaticCleanup(void)
+{
+	if (g_ncurses_initialized)
+	{
+		printf("\033[?1000l\033[?1002l\033[?1006l");
+		fflush(stdout);
+		endwin();
+		g_ncurses_initialized = false;
+	}
+}
 
 void	TerminalManager::GetTerminalSize(EditorContext &ctx)
 {
-	struct winsize	ws;
-
-	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 or ws.ws_col == 0)
-	{
-		ctx.screen_rows = 24;
-		ctx.screen_cols = 80;
-	}
-	else
-	{
-		ctx.screen_rows = ws.ws_row;
-		ctx.screen_cols = ws.ws_col;
-	}
+	getmaxyx(stdscr, ctx.screen_rows, ctx.screen_cols);
+	if (ctx.screen_rows <= 0) ctx.screen_rows = 24;
+	if (ctx.screen_cols <= 0) ctx.screen_cols = 80;
 }
 
-static void	StaticDisableRawMode(void)
+void	TerminalManager::Init(EditorContext &ctx)
 {
-	struct termios	orig;
-	
-	std::cout << "\x1b[?1049l" << RGB_RESET << std::flush;
-	tcgetattr(STDIN_FILENO, &orig);
-	orig.c_lflag |= (ECHO | ICANON | ISIG | IEXTEN);
-	tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig);
-}
+	setlocale(LC_ALL, "");
+	initscr();
+	raw();
+	noecho();
+	keypad(stdscr, TRUE);
+	set_escdelay(25);
+	curs_set(1);
+	mousemask(0, NULL);
+	printf("\033[?1000l\033[?1002l\033[?1003l\033[?1006l");
+	fflush(stdout);
 
-void	TerminalManager::DisableRawMode(void)
-{
-	std::cout << "\x1b[?1049l" << RGB_RESET << std::flush;
-	tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-}
+	g_ncurses_initialized = true;
+	atexit(StaticCleanup);
 
-void	TerminalManager::EnableRawMode(EditorContext &ctx)
-{
-	struct termios	raw;
-
-	tcgetattr(STDIN_FILENO, &orig_termios);
-	atexit(StaticDisableRawMode);
-	std::cout << "\x1b[?1049h\x1b[H" << std::flush;
-	(raw = orig_termios, raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN));
-	raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
-	raw.c_oflag &= ~(OPOST);
-	raw.c_cc[VMIN] = 1;
-	raw.c_cc[VTIME] = 0;
-	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 	GetTerminalSize(ctx);
 }
 
-unsigned int	TerminalManager::ReadKey(void)
+void	TerminalManager::Shutdown(void)
 {
-	char	c(0);
-	char	seq_char(0);
-	char	mouse_data[3];
-	char	final_char(0);
-	t_text	seq("");
-	t_text	number_part("");
-	int		code(0);
-	size_t	semi(0);
-	bool	all_digits(true);
+	StaticCleanup();
+}
 
-	if (read(STDIN_FILENO, &c, 1) == -1)
-		exit(1);
-	if (c == '\x1b')
+int		TerminalManager::ReadKey(EditorContext &ctx)
+{
+	wint_t		wch = 0;
+	int			ret = get_wch(&wch);
+
+	if (ret == KEY_CODE_YES)
 	{
-		if (read(STDIN_FILENO, &seq_char, 1) != 1)
-			return ('\x1b');
-		if (seq_char == 'O')
+		if (wch == KEY_MOUSE)
 		{
-			if (read(STDIN_FILENO, &seq_char, 1) != 1)
-				return (MOUSE_EVENT_IGNORE);
-			if (seq_char == 'A')
-				return (ARROW_UP);
-			if (seq_char == 'B')
-				return (ARROW_DOWN);
-			if (seq_char == 'C')
-				return (ARROW_RIGHT);
-			if (seq_char == 'D')
-				return (ARROW_LEFT);
-			if (seq_char == 'H')
-				return (HOME_KEY);
-			if (seq_char == 'F')
-				return (END_KEY);
-			return (MOUSE_EVENT_IGNORE);
-		}
-		if (seq_char xor '[')
-			return (MOUSE_EVENT_IGNORE);
-		if (read(STDIN_FILENO, &seq_char, 1) != 1)
-			return (MOUSE_EVENT_IGNORE);
-		if (seq_char == 'M')
-		{
-			read(STDIN_FILENO, &mouse_data[0], 1);
-			read(STDIN_FILENO, &mouse_data[1], 1);
-			read(STDIN_FILENO, &mouse_data[2], 1);
-			return (MOUSE_EVENT_IGNORE);
-		}
-		seq += seq_char;
-		for (int i(0); i < 64; ++i)
-		{
-			final_char = seq[seq.length() - 1];
-			if (std::isalpha(final_char) or final_char == '~')
-				break ;
-			if (read(STDIN_FILENO, &seq_char, 1) != 1)
-				break ;
-			seq += seq_char;
-		}
-		if (seq.empty())
-			return (MOUSE_EVENT_IGNORE);
-		final_char = seq[seq.length() - 1];
-		if (seq[0] == '<')
-			return (MOUSE_EVENT_IGNORE);
-		if (final_char == 'A')
-			return (ARROW_UP);
-		if (final_char == 'B')
-			return (ARROW_DOWN);
-		if (final_char == 'C')
-			return (ARROW_RIGHT);
-		if (final_char == 'D')
-			return (ARROW_LEFT);
-		if (final_char == 'H')
-			return (HOME_KEY);
-		if (final_char == 'F')
-			return (END_KEY);
-		if (final_char == '~')
-		{
-			number_part = seq.substr(0, seq.length() - 1);
-			semi = number_part.find(';');
-			if (semi xor t_text::npos)
-				number_part = number_part.substr(0, semi);
-			if (number_part.empty())
-				return (MOUSE_EVENT_IGNORE);
-			for (size_t idx(0); idx < number_part.length(); ++idx)
+			MEVENT	event;
+			if (getmouse(&event) == OK)
 			{
-				if (not std::isdigit(number_part[idx]))
+				if (event.bstate & BUTTON4_PRESSED)
+					return (KEY_MOUSE_SCROLL_UP);
+				if (event.bstate & BUTTON5_PRESSED)
+					return (KEY_MOUSE_SCROLL_DOWN);
+				if (event.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED | BUTTON1_DOUBLE_CLICKED))
 				{
-					all_digits = false;
-					break ;
+					static int last_cx = -1;
+					static int last_cy = -1;
+					static std::chrono::steady_clock::time_point last_click_tp;
+
+					auto now = std::chrono::steady_clock::now();
+					auto diff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_click_tp).count();
+
+					if (event.x == last_cx and event.y == last_cy and diff_ms < 150)
+						return (KEY_MOUSE_IGNORE);
+
+					last_cx = event.x;
+					last_cy = event.y;
+					last_click_tp = now;
+
+					ctx.mouse_x = event.x;
+					ctx.mouse_y = event.y;
+					ctx.mouse_bstate = event.bstate;
+					return (KEY_MOUSE_CLICK);
 				}
 			}
-			if (not all_digits)
-				return (MOUSE_EVENT_IGNORE);
-			code = std::atoi(number_part.c_str());
-			if (code == 1 or code == 7)
-				return (HOME_KEY);
-			if (code == 3)
-				return (DEL_KEY);
-			if (code == 4 or code == 8)
-				return (END_KEY);
-			if (code == 5)
-				return (PAGE_UP);
-			if (code == 6)
-				return (PAGE_DOWN);
+			return (KEY_MOUSE_IGNORE);
 		}
-		return (MOUSE_EVENT_IGNORE);
+		if (wch == KEY_BACKSPACE)
+			return (127);
+		return (static_cast<int>(wch));
 	}
-	return (static_cast<unsigned char>(c));
+	else if (ret == OK)
+	{
+		if (wch == 127 or wch == 8)
+			return (127);
+		if (wch == '\n' or wch == '\r')
+			return ('\r');
+		return (static_cast<int>(wch));
+	}
+	return (0);
 }
