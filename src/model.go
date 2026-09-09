@@ -1,3 +1,14 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                       ::::::::   ::::::::  */
+/*    model.go                                         :+:    :+: :+:    :+:  */
+/*                                                    +:+        +:+          */
+/*    By: Ser Superior <marcioeduine@gmail.com>      +#++:++#++ +#++:++#++    */
+/*                                                         +#+        +#+     */
+/*    Created: 2026/09/09 22:03:08 by Ser Superior #+#    #+# #+#    #+#      */
+/*    Updated: 2026/09/09 22:03:23 by Ser Superior ########   ########        */
+/*                                                                            */
+/* ************************************************************************** */
 package main
 
 import (
@@ -580,77 +591,105 @@ func getGitUser(workspacePath string) (string, string) {
 	return name, email
 }
 
-func padOrTruncateRune(s string, maxRunes int) string {
-	runes := []rune(s)
-	if len(runes) > maxRunes {
-		return string(runes[:maxRunes])
+var ssLogo = []string{
+	"::::::::   ::::::::",
+	":+:    :+: :+:    :+:",
+	"+:+        +:+",
+	"+#++:++#++ +#++:++#++",
+	"+#+        +#+",
+	"#+#    #+# #+#    #+#",
+	"########   ########",
+}
+
+func getDelimiters(filename string) (string, string) {
+	ext := strings.ToLower(filepath.Ext(filename))
+	base := strings.ToLower(filepath.Base(filename))
+	if base == "makefile" || base == "dockerfile" || ext == ".mk" || ext == ".py" || ext == ".sh" || ext == ".bash" || ext == ".zsh" || ext == ".fish" || ext == ".yml" || ext == ".yaml" || ext == ".toml" {
+		return "# ", " #"
 	}
-	if len(runes) < maxRunes {
-		return string(runes) + strings.Repeat(" ", maxRunes-len(runes))
+	if ext == ".html" || ext == ".xml" || ext == ".svg" {
+		return "<!-- ", " -->"
+	}
+	return "/* ", " */"
+}
+
+func formatFilename(filename string, maxLength int) string {
+	runes := []rune(filename)
+	if len(runes) > maxLength {
+		runes = append(runes[:maxLength-3], []rune("...")...)
+	}
+	s := string(runes)
+	if len(s) < maxLength {
+		s = s + strings.Repeat(" ", maxLength-len(s))
 	}
 	return s
 }
 
+func padHeaderLine(leftText, logo string, targetRightWidth int, lc, rc string) string {
+	spacesAfterLogo := targetRightWidth - len(logo) - len(rc)
+	if spacesAfterLogo < 0 {
+		spacesAfterLogo = 0
+	}
+	rightPart := logo + strings.Repeat(" ", spacesAfterLogo) + rc
+
+	leftSpaceAvailable := 80 - len(rightPart) - len(lc)
+	if leftSpaceAvailable < 0 {
+		leftSpaceAvailable = 0
+	}
+
+	leftRunes := []rune(leftText)
+	if len(leftRunes) > leftSpaceAvailable {
+		leftRunes = leftRunes[:leftSpaceAvailable]
+	}
+	leftText = string(leftRunes)
+	padLen := leftSpaceAvailable - len(leftRunes)
+	if padLen < 0 {
+		padLen = 0
+	}
+
+	return lc + leftText + strings.Repeat(" ", padLen) + rightPart
+}
+
 func generateHeader(filename string, workspacePath string) []string {
-	ext := strings.ToLower(filepath.Ext(filename))
+	lc, rc := getDelimiters(filename)
 	base := filepath.Base(filename)
+	if base == "" || base == "." {
+		base = "stdin"
+	}
 	now := time.Now().Format("2006/01/02 15:04:05")
 
 	userName, userEmail := getGitUser(workspacePath)
-
-	author := "By: " + userName
-	if userEmail != "" {
-		author += " <" + userEmail + ">"
+	if userEmail == "" {
+		userEmail = "marcioeduine@gmail.com"
+	}
+	emailFormatted := userEmail
+	if !strings.HasPrefix(emailFormatted, "<") {
+		emailFormatted = "<" + emailFormatted + ">"
 	}
 
-	base49 := padOrTruncateRune(base, 49)
-	author47 := padOrTruncateRune(author, 47)
-	createdStr48 := padOrTruncateRune(fmt.Sprintf("Created: %s by %s", now, userName), 48)
-	updatedStr47 := padOrTruncateRune(fmt.Sprintf("Updated: %s by %s", now, userName), 47)
+	internalAsterisks := 80 - len(lc) - len(rc)
+	if internalAsterisks < 0 {
+		internalAsterisks = 0
+	}
+	border := lc + strings.Repeat("*", internalAsterisks) + rc
 
-	switch ext {
-	case ".go", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".cs", ".java", ".js", ".ts", ".css", ".php":
-		return []string{
-			"/* ************************************************************************** */",
-			"/*                                                                            */",
-			"/*                                                       :::      ::::::::    */",
-			fmt.Sprintf("/*   %s :+:      :+:    :+:    */", base49),
-			"/*                                                    +:+---+----+---+        */",
-			fmt.Sprintf("/*   %s +#+------+------+        */", author47),
-			"/*                                                +#+------+------+           */",
-			fmt.Sprintf("/*   %s #+#    #+#              */", createdStr48),
-			fmt.Sprintf("/*   %s########   ########.fr    */", updatedStr47),
-			"/*                                                                            */",
-			"/* ************************************************************************** */",
-			"",
-		}
-	case ".py", ".sh", ".bash", ".zsh", ".yml", ".yaml", ".toml":
-		return []string{
-			"# **************************************************************************** #",
-			"#                                                                              #",
-			"#                                                        :::      ::::::::     #",
-			fmt.Sprintf("#   %s :+:      :+:    :+:     #", base49),
-			"#                                                    +:+---+----+---+          #",
-			fmt.Sprintf("#   %s +#+------+------+         #", author47),
-			"#                                                +#+------+------+         #",
-			fmt.Sprintf("#   %s #+#    #+#               #", createdStr48),
-			fmt.Sprintf("#   %s########   ########.fr     #", updatedStr47),
-			"#                                                                              #",
-			"# **************************************************************************** #",
-			"",
-		}
-	default:
-		base68 := padOrTruncateRune(base, 68)
-		author68 := padOrTruncateRune(author, 68)
-		createdUpdatedStr68 := padOrTruncateRune(fmt.Sprintf("Created: %s | Updated: %s", now, now), 68)
-		return []string{
-			"<!-- ********************************************************************** -->",
-			fmt.Sprintf("<!--   %s -->", base68),
-			fmt.Sprintf("<!--   %s -->", author68),
-			fmt.Sprintf("<!--   %s -->", createdUpdatedStr68),
-			"<!-- ********************************************************************** -->",
-			"",
-		}
+	fnFormatted := formatFilename(base, 42)
+	byText := fmt.Sprintf("   By: %s %s", userName, emailFormatted)
+	createdText := fmt.Sprintf("   Created: %s by %s", now, userName)
+	updatedText := fmt.Sprintf("   Updated: %s by %s", now, userName)
+
+	return []string{
+		border,
+		padHeaderLine("", "", 0, lc, rc),
+		padHeaderLine("", ssLogo[0], 23, lc, rc),
+		padHeaderLine("   "+fnFormatted, ssLogo[1], 25, lc, rc),
+		padHeaderLine("", ssLogo[2], 26, lc, rc),
+		padHeaderLine(byText, ssLogo[3], 27, lc, rc),
+		padHeaderLine("", ssLogo[4], 21, lc, rc),
+		padHeaderLine(createdText, ssLogo[5], 29, lc, rc),
+		padHeaderLine(updatedText, ssLogo[6], 29, lc, rc),
+		padHeaderLine("", "", 0, lc, rc),
+		border,
 	}
 }
 
@@ -661,17 +700,40 @@ func (m *mainModel) insertOrUpdateHeader() {
 		return
 	}
 
-	headerLines := generateHeader(tab.Path, m.workspacePath)
-	if len(tab.Lines) >= 11 && (strings.HasPrefix(tab.Lines[0], "/* ****") || strings.HasPrefix(tab.Lines[0], "# ****") || strings.HasPrefix(tab.Lines[0], "<!-- ****")) {
-		newLines := append(headerLines, tab.Lines[11:]...)
-		tab.Lines = newLines
-		m.statusMsg = fmt.Sprintf("Header updated for %s", filepath.Base(tab.Path))
+	maxCheck := len(tab.Lines)
+	if maxCheck > 12 {
+		maxCheck = 12
+	}
+
+	hasHeader := false
+	for i := 0; i < maxCheck; i++ {
+		if strings.Contains(tab.Lines[i], "Created:") {
+			hasHeader = true
+			break
+		}
+	}
+
+	lc, rc := getDelimiters(tab.Path)
+	userName, _ := getGitUser(m.workspacePath)
+	now := time.Now().Format("2006/01/02 15:04:05")
+
+	if hasHeader {
+		for i := 0; i < maxCheck; i++ {
+			if strings.Contains(tab.Lines[i], "Updated:") {
+				updatedText := fmt.Sprintf("   Updated: %s by %s", now, userName)
+				tab.Lines[i] = padHeaderLine(updatedText, ssLogo[6], 29, lc, rc)
+				m.statusMsg = fmt.Sprintf("[SSHeader] Header updated for %s", filepath.Base(tab.Path))
+				tab.IsModified = true
+				return
+			}
+		}
 	} else {
+		headerLines := generateHeader(tab.Path, m.workspacePath)
 		newLines := append(headerLines, tab.Lines...)
 		tab.Lines = newLines
-		m.statusMsg = fmt.Sprintf("Header inserted into %s", filepath.Base(tab.Path))
+		m.statusMsg = fmt.Sprintf("[SSHeader] Header inserted into %s", filepath.Base(tab.Path))
+		tab.IsModified = true
 	}
-	tab.IsModified = true
 }
 
 func (m *mainModel) openFile(path string) {
@@ -723,6 +785,29 @@ func (m *mainModel) saveActiveFile() {
 		m.statusMsg = "No active file to save."
 		return
 	}
+
+	if tab.IsModified {
+		maxCheck := len(tab.Lines)
+		if maxCheck > 12 {
+			maxCheck = 12
+		}
+		for i := 0; i < maxCheck; i++ {
+			if strings.Contains(tab.Lines[i], "Created:") {
+				for j := 0; j < maxCheck; j++ {
+					if strings.Contains(tab.Lines[j], "Updated:") {
+						lc, rc := getDelimiters(tab.Path)
+						userName, _ := getGitUser(m.workspacePath)
+						now := time.Now().Format("2006/01/02 15:04:05")
+						updatedText := fmt.Sprintf("   Updated: %s by %s", now, userName)
+						tab.Lines[j] = padHeaderLine(updatedText, ssLogo[6], 29, lc, rc)
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
 	content := strings.Join(tab.Lines, "\n")
 	err := os.WriteFile(tab.Path, []byte(content), 0644)
 	if err != nil {
@@ -1549,7 +1634,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *mainModel) executePaletteCommand(cmdStr string, cmds *[]tea.Cmd) bool {
 	cmdStr = strings.TrimPrefix(cmdStr, ":")
 
-	if cmdStr == "user" || cmdStr == "config" || cmdStr == "ssheader" {
+	if cmdStr == "header" || cmdStr == "ssheader" || cmdStr == "SSHeader" {
+		m.insertOrUpdateHeader()
+		return false
+	}
+
+	if cmdStr == "user" || cmdStr == "config" {
 		m.openGitUserModal()
 		return false
 	}
