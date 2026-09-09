@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,13 @@ type mainModel struct {
 	showCmdPalette  bool
 	cmdPaletteInput textinput.Model
 
+	// Workspace Directory Picker Modal
+	workspacePath      string
+	showWorkspaceModal bool
+	wsModalPath        string
+	wsModalItems       []WsModalItem
+	wsModalSel         int
+
 	// Source Control (Git)
 	gitItems       []GitStatusItem
 	gitBranch      string
@@ -154,13 +162,98 @@ func initialModel() mainModel {
 	return m
 }
 
+func isDir(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
 func (m *mainModel) loadDirectory(root string) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		abs = root
 	}
+	m.workspacePath = abs
 	m.rootDir = buildFileTree(abs, 0)
 	m.flattenTree()
+}
+
+func (m *mainModel) openWorkspaceModal(startPath string) {
+	if startPath == "" {
+		if m.workspacePath != "" {
+			startPath = m.workspacePath
+		} else {
+			home, err := os.UserHomeDir()
+			if err == nil && home != "" {
+				startPath = home
+			} else {
+				startPath = "/"
+			}
+		}
+	}
+	absPath, err := filepath.Abs(startPath)
+	if err != nil || !isDir(absPath) {
+		if m.workspacePath != "" {
+			absPath = m.workspacePath
+		} else {
+			absPath = "/"
+		}
+	}
+	m.wsModalPath = absPath
+	m.showWorkspaceModal = true
+	m.showCmdPalette = false
+	m.loadWorkspaceModalItems()
+}
+
+func (m *mainModel) loadWorkspaceModalItems() {
+	m.wsModalItems = nil
+	m.wsModalSel = 0
+
+	m.wsModalItems = append(m.wsModalItems, WsModalItem{
+		Name:            fmt.Sprintf("󰉋 [ Open Current Folder: %s ]", filepath.Base(m.wsModalPath)),
+		Path:            m.wsModalPath,
+		IsSelectCurrent: true,
+		IsDir:           true,
+	})
+
+	parent := filepath.Dir(m.wsModalPath)
+	if parent != m.wsModalPath && parent != "" {
+		m.wsModalItems = append(m.wsModalItems, WsModalItem{
+			Name:     "󰌆 .. (Parent Directory)",
+			Path:     parent,
+			IsParent: true,
+			IsDir:    true,
+		})
+	}
+
+	entries, err := os.ReadDir(m.wsModalPath)
+	if err == nil {
+		var subdirs []WsModalItem
+		for _, e := range entries {
+			if e.IsDir() {
+				subdirs = append(subdirs, WsModalItem{
+					Name:  "󰉋 " + e.Name() + "/",
+					Path:  filepath.Join(m.wsModalPath, e.Name()),
+					IsDir: true,
+				})
+			} else {
+				info, errInfo := e.Info()
+				if errInfo == nil && (info.Mode()&os.ModeSymlink != 0) {
+					target, errEval := filepath.EvalSymlinks(filepath.Join(m.wsModalPath, e.Name()))
+					if errEval == nil && isDir(target) {
+						subdirs = append(subdirs, WsModalItem{
+							Name:  "󰉋 " + e.Name() + "/ (symlink)",
+							Path:  target,
+							IsDir: true,
+						})
+					}
+				}
+			}
+		}
+		sort.Slice(subdirs, func(i, j int) bool {
+			return strings.ToLower(subdirs[i].Name) < strings.ToLower(subdirs[j].Name)
+		})
+		m.wsModalItems = append(m.wsModalItems, subdirs...)
+	}
 }
 
 func buildFileTree(path string, depth int) *FileItem {
@@ -234,17 +327,35 @@ func (m *mainModel) activeTabPtr() *EditorTab {
 }
 
 func (m *mainModel) refreshGitStatus() {
-	out, err := exec.Command("git", "status", "--porcelain").Output()
+	cmdStatus := exec.Command("git", "status", "--porcelain")
+	if m.workspacePath != "" {
+		cmdStatus.Dir = m.workspacePath
+	}
+	out, err := cmdStatus.Output()
 	if err != nil {
 		m.gitItems = nil
 		m.gitBranch = ""
 		return
 	}
-	branchOut, _ := exec.Command("git", "branch", "--show-current").Output()
-	m.gitBranch = strings.TrimSpace(string(branchOut))
-	if m.gitBranch == "" {
-		m.gitBranch = "main"
+	cmdBranch := exec.Command("git", "branch", "--show-current")
+	if m.workspacePath != "" {
+		cmdBranch.Dir = m.workspacePath
 	}
+	branchOut, _ := cmdBranch.Output()
+	b := strings.TrimSpace(string(branchOut))
+	if b == "" {
+		cmdRev := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		if m.workspacePath != "" {
+			cmdRev.Dir = m.workspacePath
+		}
+		if revOut, errRev := cmdRev.Output(); errRev == nil {
+			b = strings.TrimSpace(string(revOut))
+		}
+	}
+	if b == "" {
+		b = "main"
+	}
+	m.gitBranch = b
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var items []GitStatusItem
@@ -270,24 +381,79 @@ func (m *mainModel) refreshGitStatus() {
 	}
 }
 
-func generateHeader(filename string) []string {
+func getGitUser(workspacePath string) (string, string) {
+	cmdName := exec.Command("git", "config", "user.name")
+	if workspacePath != "" {
+		cmdName.Dir = workspacePath
+	}
+	outName, errName := cmdName.Output()
+	name := ""
+	if errName == nil {
+		name = strings.TrimSpace(string(outName))
+	}
+
+	cmdEmail := exec.Command("git", "config", "user.email")
+	if workspacePath != "" {
+		cmdEmail.Dir = workspacePath
+	}
+	outEmail, errEmail := cmdEmail.Output()
+	email := ""
+	if errEmail == nil {
+		email = strings.TrimSpace(string(outEmail))
+	}
+
+	if name == "" {
+		name = os.Getenv("USER")
+		if name == "" {
+			name = os.Getenv("LOGNAME")
+		}
+		if name == "" {
+			name = "Ser Superior"
+		}
+	}
+	return name, email
+}
+
+func padOrTruncateRune(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes])
+	}
+	if len(runes) < maxRunes {
+		return string(runes) + strings.Repeat(" ", maxRunes-len(runes))
+	}
+	return s
+}
+
+func generateHeader(filename string, workspacePath string) []string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	base := filepath.Base(filename)
-	author := "By: Márcio Eduine (Ser Superior) <marcioeduine@gmail.com>"
 	now := time.Now().Format("2006/01/02 15:04:05")
+
+	userName, userEmail := getGitUser(workspacePath)
+
+	author := "By: " + userName
+	if userEmail != "" {
+		author += " <" + userEmail + ">"
+	}
+
+	base49 := padOrTruncateRune(base, 49)
+	author47 := padOrTruncateRune(author, 47)
+	createdStr48 := padOrTruncateRune(fmt.Sprintf("Created: %s by %s", now, userName), 48)
+	updatedStr47 := padOrTruncateRune(fmt.Sprintf("Updated: %s by %s", now, userName), 47)
 
 	switch ext {
 	case ".go", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".cs", ".java", ".js", ".ts", ".css", ".php":
 		return []string{
 			"/* ************************************************************************** */",
 			"/*                                                                            */",
-			"/*                                                       :::      ::::::::   */",
-			fmt.Sprintf("/*   %-50s :+:      :+:    :+:   */", base),
+			"/*                                                       :::      ::::::::    */",
+			fmt.Sprintf("/*   %s :+:      :+:    :+:    */", base49),
 			"/*                                                    +:+---+----+---+        */",
-			fmt.Sprintf("/*   %-50s +#+------+------+       */", author),
-			"/*                                                +#+------+------+       */",
-			fmt.Sprintf("/*   Created: %s by Ser Superior     #+#    #+#             */", now),
-			fmt.Sprintf("/*   Updated: %s by Ser Superior    ########   ########.fr   */", now),
+			fmt.Sprintf("/*   %s +#+------+------+        */", author47),
+			"/*                                                +#+------+------+           */",
+			fmt.Sprintf("/*   %s #+#    #+#              */", createdStr48),
+			fmt.Sprintf("/*   %s########   ########.fr    */", updatedStr47),
 			"/*                                                                            */",
 			"/* ************************************************************************** */",
 			"",
@@ -296,23 +462,26 @@ func generateHeader(filename string) []string {
 		return []string{
 			"# **************************************************************************** #",
 			"#                                                                              #",
-			"#                                                        :::      ::::::::    #",
-			fmt.Sprintf("#   %-50s :+:      :+:    :+:    #", base),
-			"#                                                    +:+---+----+---+         #",
-			fmt.Sprintf("#   %-50s +#+------+------+        #", author),
-			"#                                                +#+------+------+        #",
-			fmt.Sprintf("#   Created: %s by Ser Superior     #+#    #+#              #", now),
-			fmt.Sprintf("#   Updated: %s by Ser Superior    ########   ########.fr    #", now),
+			"#                                                        :::      ::::::::     #",
+			fmt.Sprintf("#   %s :+:      :+:    :+:     #", base49),
+			"#                                                    +:+---+----+---+          #",
+			fmt.Sprintf("#   %s +#+------+------+         #", author47),
+			"#                                                +#+------+------+         #",
+			fmt.Sprintf("#   %s #+#    #+#               #", createdStr48),
+			fmt.Sprintf("#   %s########   ########.fr     #", updatedStr47),
 			"#                                                                              #",
 			"# **************************************************************************** #",
 			"",
 		}
 	default:
+		base68 := padOrTruncateRune(base, 68)
+		author68 := padOrTruncateRune(author, 68)
+		createdUpdatedStr68 := padOrTruncateRune(fmt.Sprintf("Created: %s | Updated: %s", now, now), 68)
 		return []string{
 			"<!-- ********************************************************************** -->",
-			fmt.Sprintf("<!--   %-68s -->", base),
-			fmt.Sprintf("<!--   %-68s -->", author),
-			fmt.Sprintf("<!--   Created: %s | Updated: %s   -->", now, now),
+			fmt.Sprintf("<!--   %s -->", base68),
+			fmt.Sprintf("<!--   %s -->", author68),
+			fmt.Sprintf("<!--   %s -->", createdUpdatedStr68),
 			"<!-- ********************************************************************** -->",
 			"",
 		}
@@ -326,7 +495,7 @@ func (m *mainModel) insertOrUpdateHeader() {
 		return
 	}
 
-	headerLines := generateHeader(tab.Path)
+	headerLines := generateHeader(tab.Path, m.workspacePath)
 	if len(tab.Lines) >= 11 && (strings.HasPrefix(tab.Lines[0], "/* ****") || strings.HasPrefix(tab.Lines[0], "# ****") || strings.HasPrefix(tab.Lines[0], "<!-- ****")) {
 		newLines := append(headerLines, tab.Lines[11:]...)
 		tab.Lines = newLines
@@ -672,6 +841,43 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.showWorkspaceModal {
+			switch key {
+			case "esc", "q":
+				m.showWorkspaceModal = false
+			case "up", "k":
+				if m.wsModalSel > 0 {
+					m.wsModalSel--
+				} else if len(m.wsModalItems) > 0 {
+					m.wsModalSel = len(m.wsModalItems) - 1
+				}
+			case "down", "j":
+				if m.wsModalSel < len(m.wsModalItems)-1 {
+					m.wsModalSel++
+				} else {
+					m.wsModalSel = 0
+				}
+			case "enter":
+				if len(m.wsModalItems) > 0 && m.wsModalSel < len(m.wsModalItems) {
+					item := m.wsModalItems[m.wsModalSel]
+					if item.IsSelectCurrent {
+						m.loadDirectory(m.wsModalPath)
+						m.refreshGitStatus()
+						m.showWorkspaceModal = false
+						m.statusMsg = "Workspace set to: " + m.wsModalPath
+					} else if item.IsDir {
+						m.openWorkspaceModal(item.Path)
+					}
+				}
+			case "space", "ctrl+o":
+				m.loadDirectory(m.wsModalPath)
+				m.refreshGitStatus()
+				m.showWorkspaceModal = false
+				m.statusMsg = "Workspace set to: " + m.wsModalPath
+			}
+			return m, nil
+		}
+
 		if m.showModal {
 			switch key {
 			case "esc", "q":
@@ -997,18 +1203,14 @@ func (m *mainModel) executePaletteCommand(cmdStr string, cmds *[]tea.Cmd) bool {
 		return false
 	}
 
-	if strings.HasPrefix(cmdStr, "workspace ") || strings.HasPrefix(cmdStr, "cd ") || strings.HasPrefix(cmdStr, "folder ") || strings.HasPrefix(cmdStr, "openfolder ") {
+	if cmdStr == "workspace" || cmdStr == "folder" || cmdStr == "cd" || cmdStr == "openfolder" ||
+		strings.HasPrefix(cmdStr, "workspace") || strings.HasPrefix(cmdStr, "cd") || strings.HasPrefix(cmdStr, "folder") || strings.HasPrefix(cmdStr, "openfolder") {
 		parts := strings.SplitN(cmdStr, " ", 2)
+		startDir := ""
 		if len(parts) == 2 {
-			targetDir := strings.TrimSpace(parts[1])
-			if err := os.Chdir(targetDir); err == nil {
-				m.loadDirectory(targetDir)
-				m.refreshGitStatus()
-				m.statusMsg = fmt.Sprintf("Workspace changed to: %s", targetDir)
-			} else {
-				m.statusMsg = fmt.Sprintf("Failed to change workspace: %v", err)
-			}
+			startDir = strings.TrimSpace(parts[1])
 		}
+		m.openWorkspaceModal(startDir)
 		return false
 	}
 
@@ -1470,6 +1672,10 @@ func (m mainModel) View() string {
 	barText = truncateString(barText, m.width-lipgloss.Width(barLeft)-2)
 	bar := barLeft + statusBody.Render(barText)
 	finalView := lipgloss.JoinVertical(lipgloss.Left, mainView, bar)
+
+	if m.showWorkspaceModal {
+		return renderWorkspaceModal(m.wsModalPath, m.wsModalItems, m.wsModalSel, m.width, m.height)
+	}
 
 	if m.showCmdPalette {
 		return renderCmdPalette(m.cmdPaletteInput.View(), m.width, m.height)

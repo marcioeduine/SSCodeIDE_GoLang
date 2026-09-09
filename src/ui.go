@@ -323,3 +323,55 @@ func renderCmdPalette(cmdInputView string, width, height int) string {
 		lipgloss.WithWhitespaceChars(" "),
 	)
 }
+
+type WsModalItem struct {
+	Name            string
+	Path            string
+	IsParent        bool
+	IsSelectCurrent bool
+	IsDir           bool
+}
+
+func renderWorkspaceModal(path string, items []WsModalItem, sel int, width, height int) string {
+	var sb strings.Builder
+
+	title := modalTitle.Render("📂 Select Workspace Directory")
+	sb.WriteString(title + "\n")
+
+	loc := lipgloss.NewStyle().Foreground(mdCyan).Bold(true).Render("Current: " + path)
+	sb.WriteString(loc + "\n\n")
+
+	maxVisible := 10
+	startIdx := 0
+	if sel >= maxVisible {
+		startIdx = sel - maxVisible + 1
+	}
+	endIdx := startIdx + maxVisible
+	if endIdx > len(items) {
+		endIdx = len(items)
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		item := items[i]
+		line := item.Name
+		if i == sel {
+			sb.WriteString(modalItemSelected.Render("> "+line) + "\n")
+		} else {
+			sb.WriteString(modalItem.Render("  "+line) + "\n")
+		}
+	}
+
+	if len(items) == 0 {
+		sb.WriteString(modalItem.Render("  (No subdirectories found)") + "\n")
+	}
+
+	sb.WriteString("\n")
+	help := lipgloss.NewStyle().Foreground(mdTextMuted).Italic(true).Render(
+		"[Enter] Browse/Select | [Space] Open Current Folder | [k/j] Navigate | [Esc] Cancel",
+	)
+	sb.WriteString(help)
+
+	content := modalBox.Render(sb.String())
+	return renderModalCentered(content, width, height)
+}
+

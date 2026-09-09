@@ -9,11 +9,12 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 - **File Explorer**: Interactive tree navigation with folder expansion and file icon indicators.
 - **Multi-Tab Editor**: Edit multiple files simultaneously with line numbers, status indicators, and keyboard navigation.
 - **Direct Tab Switching**: Press `Alt+1..9`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, or `Ctrl+N` to jump directly between active editor tabs.
-- **Automated F4 Header Generator**: Press `F4` to automatically insert or update standard author file headers matching the file extension (`.go`, `.py`, `.c`, `.cpp`, `.cs`, `.js`, `.ts`, `.sh`, `.html`, etc.).
+- **Dynamic Git Branch Status**: View the active Git branch (` main`, ` feature/...`) in real-time on the status bar.
+- **Automated F4 Header Generator**: Press `F4` to insert or update standard 42/SSHeader file headers. Automatically retrieves author name and email from `git config user.name` and `git config user.email`, and formats lines to fit strictly within the exact character length boundary of the header delimiter.
+- **Interactive Workspace Directory Picker**: Type `:workspace`, `:cd`, or `:folder` in the Command Palette (`Ctrl+P`) to open an interactive modal directory browser. List all system directories and navigate seamlessly (`..`, subfolders, `Space`/`Enter` to select workspace).
 - **VS Code Style Git Control**: Press `Ctrl+4` or `Ctrl+Shift+G` to open the Git Source Control panel. View changed files, stage/unstage changes, write commit messages, and push/pull to remote GitHub repositories.
-- **Workspace Opening**: Open entire folder workspaces via Command Palette (`Ctrl+P` -> `:workspace <path>` or `:cd <path>`).
 - **AI CLI Assistant**: Integrated chat panel connected directly to local Ollama LLMs (`deepseek-coder`, `qwen2.5-coder`, `llama3.2`, etc.).
-- **Command Palette**: Press `Ctrl+P` to open a floating command widget for quick navigation and settings.
+- **Command Palette**: Press `Ctrl+P` to open a floating command widget for quick navigation, workspace selection, and settings.
 - **Custom Themes**: Instant theme switching (`catppuccin`, `dracula`, `nord`).
 
 ---
@@ -29,7 +30,7 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 | `Alt+1` .. `Alt+9` | Switch directly to Editor Tab 1..9 |
 | `Ctrl+Tab` / `Ctrl+N` | Switch to Next Editor Tab |
 | `Ctrl+Shift+Tab` | Switch to Previous Editor Tab |
-| `F4` | Insert or update author file header |
+| `F4` | Insert or update Git-configured author file header |
 | `Tab` | Cycle focus between Explorer, Editor, Chat, and Git Source Control |
 | `Ctrl+P` | Toggle Command Palette |
 | `Ctrl+B` | Toggle Explorer sidebar visibility |
@@ -59,7 +60,8 @@ SSCode IDE is a terminal-based text editor, Git source control manager, and loca
 
 You can execute commands in the Command Palette (`Ctrl+P`) or directly in the Chat input box:
 
-- `:workspace <path>` or `:cd <path>` — Change working directory and load workspace folder.
+- `:workspace` or `:cd` or `:folder` — Open interactive modal directory picker to choose a workspace.
+- `:workspace <path>` or `:cd <path>` — Open modal browser starting at specified directory path.
 - `:git` or `:status` — Focus Git Source Control panel.
 - `:models` or `/models` — Open the Ollama model manager dialog.
 - `:theme <name>` — Change theme (`catppuccin`, `dracula`, `nord`).
