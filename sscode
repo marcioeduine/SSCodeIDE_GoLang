@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# sscode - SSCodeIDE Terminal IDE Launcher
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$SCRIPT_DIR/SSCodeIDE"
+
+if [ ! -f "$BIN" ]; then
+    echo "[SSCodeIDE] Binary not found. Building executable..."
+    (cd "$SCRIPT_DIR" && make)
+fi
+
+exec "$BIN" "$@"
